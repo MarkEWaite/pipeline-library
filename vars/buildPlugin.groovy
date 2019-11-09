@@ -356,5 +356,6 @@ boolean skipTestsIfNoRelevantChanges(skipTestsInitialValue) {
             }
         }
     }
+    echo "Skipping tests because changeset does not contain java or pom.xml changes"
     return true
 }
