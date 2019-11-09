@@ -247,9 +247,9 @@ def call(Map params = [:]) {
                 } finally {
                     if (hasDockerLabel()) {
                         if(isUnix()) {
-                            sh 'docker system prune --force --all || echo "Failed to cleanup docker images"'
+                            sh 'echo skipping docker system prune --force --all || echo "Failed to cleanup docker images"'
                         } else {
-                            bat 'docker system prune --force --all || echo "Failed to cleanup docker images"'
+                            bat 'echo skipping docker system prune --force --all || echo "Failed to cleanup docker images"'
                         }
                     }
                 }
