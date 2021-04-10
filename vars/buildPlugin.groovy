@@ -59,6 +59,7 @@ def call(Map params = [:]) {
                             isMaven = fileExists('pom.xml')
                             incrementals = fileExists('.mvn/extensions.xml') &&
                                     readFile('.mvn/extensions.xml').contains('git-changelist-maven-extension')
+                            skipTests = skipTestsIfNoRelevantChanges(skipTests)
                             if (incrementals) { // Incrementals needs 'git status -s' to be empty at start of job
                                 if (isUnix()) {
                                     sh(script: 'git clean -xffd > /dev/null 2>&1',
@@ -327,4 +328,44 @@ static List<Map<String, String>> recommendedConfigurations() {
         // [ platform: "windows", jdk: "11", jenkins: recentLTS, javaLevel: "8" ]
     ]
     return configurations
+}
+
+/**
+ * Return true if tests should be skipped because the changeset
+ * contains no changes that will reasonably affect a test.
+ */
+@NonCPS
+boolean skipTestsIfNoRelevantChanges(skipTestsInitialValue) {
+    if (skipTestsInitialValue) { // Explicit skip wins
+        return true
+    }
+    if (currentBuild.number == 1) { // Don't skip tests on first build
+        return false
+    }
+    if (currentBuild.changeSets == null || currentBuild.changeSets.size() == 0) { // Don't skip tests if no changeSet detected
+        // No changeset indicates user launched build without SCM change
+        // Run tests on user launched build
+        return false
+    }
+    buildCauses = currentBuild.getBuildCauses()
+    for (int i = 0; i < buildCauses.size(); i++) {  // Don't skip tests if user started the build
+        buildCauseClass = buildCauses[i]._class // String name of class
+        if (buildCauseClass == 'hudson.model.Cause$UserIdCause') {
+            return false
+        }
+    }
+    def changeLogSets = currentBuild.changeSets
+    for (int i = 0; i < changeLogSets.size(); i++) { // for each changelog
+        def entries = changeLogSets[i].items
+        for (int j = 0; j < entries.length; j++) {   // for each commit in the changelog
+            def files = new ArrayList(entries[j].affectedFiles)
+            for (int k = 0; k < files.size(); k++) { // for each file in the commit
+                if (files[k].path.endsWith(".java") || files[k].path.endsWith("pom.xml")) {
+                    return false
+                }
+            }
+        }
+    }
+    echo "Skipping tests because changeset does not contain java or pom.xml changes"
+    return true
 }
