@@ -14,7 +14,14 @@ def call(Map params = [:]) {
     def repo = params.containsKey('repo') ? params.repo : null
     def failFast = params.containsKey('failFast') ? params.failFast : true
     def timeoutValue = params.containsKey('timeout') ? params.timeout : 60
-    def useAci = params.containsKey('useAci') ? params.useAci : false
+
+    def useContainerAgent = params.containsKey('useContainerAgent') ? params.useContainerAgent : false
+    if (params.containsKey('useAci')) {
+        deprecationMessage = 'The parameter "useAci" is deprecated. Please use "useContainerAgent" instead as per https://issues.jenkins.io/browse/INFRA-2918.'
+        echo "WARNING: ${deprecationMessage}"
+        publishChecks name: 'pipeline-library', summary: 'Replace useAci with useContainerAgent', conclusion: 'NEUTRAL', text: deprecationMessage
+        useContainerAgent = params.containsKey('useAci')
+    }
     if(timeoutValue > 180) {
       echo "Timeout value requested was $timeoutValue, lowering to 180 to avoid Jenkins project's resource abusive consumption"
       timeoutValue = 180
@@ -27,19 +34,21 @@ def call(Map params = [:]) {
         String label = config.platform
         String jdk = config.jdk
         String jenkinsVersion = config.jenkins
-        String javaLevel = config.javaLevel
+        if (config.containsKey('javaLevel')) {
+            echo 'WARNING: Ignoring deprecated "javaLevel" parameter. This parameter should be removed from your "Jenkinsfile".'
+        }
 
         String stageIdentifier = "${label}-${jdk}${jenkinsVersion ? '-' + jenkinsVersion : ''}"
         boolean first = tasks.size() == 1
         boolean skipTests = params?.tests?.skip
-        boolean addToolEnv = !useAci
+        boolean addToolEnv = !useContainerAgent
 
-        if(useAci && (label == 'linux' || label == 'windows')) {
-            String aciLabel = jdk == '8' ? 'maven' : 'maven-11'
+        if(useContainerAgent && (label == 'linux' || label == 'windows')) {
+            String agentContainerLabel = jdk == '8' ? 'maven' : 'maven-11'
             if(label == 'windows') {
-                aciLabel += "-windows"
+                agentContainerLabel += "-windows"
             }
-            label = aciLabel
+            label = agentContainerLabel
         }
 
         tasks[stageIdentifier] = {
@@ -101,9 +110,6 @@ def call(Map params = [:]) {
                                 }
                                 if (jenkinsVersion) {
                                     mavenOptions += "-Djenkins.version=${jenkinsVersion} -Daccess-modifier-checker.failOnError=false"
-                                }
-                                if (javaLevel) {
-                                    mavenOptions += "-Djava.level=${javaLevel}"
                                 }
                                 if (skipTests) {
                                     mavenOptions += "-DskipTests"
@@ -269,7 +275,7 @@ boolean hasDockerLabel() {
 }
 
 List<Map<String, String>> getConfigurations(Map params) {
-    boolean explicit = params.containsKey("configurations")
+    boolean explicit = params.containsKey("configurations") && params.configurations != null
     boolean implicit = params.containsKey('platforms') || params.containsKey('jdkVersions') || params.containsKey('jenkinsVersions')
 
     if (explicit && implicit) {
@@ -300,8 +306,7 @@ List<Map<String, String>> getConfigurations(Map params) {
                 ret << [
                         "platform": p,
                         "jdk": jdk,
-                        "jenkins": jenkins,
-                        "javaLevel": null   // not supported in the old format
+                        "jenkins": jenkins
                 ]
             }
         }
@@ -310,24 +315,10 @@ List<Map<String, String>> getConfigurations(Map params) {
 }
 
 /**
- * Get recommended configurations for testing.
- * Includes testing Java 8 and 11 on the newest LTS.
+ * @deprecated no longer recommended
  */
 static List<Map<String, String>> recommendedConfigurations() {
-    def recentLTS = "2.164.1"
-    def configurations = [
-        // Intentionally test configurations which have detected the most problems
-        // Linux - Java 8 with plugin specified minimum Jenkins version
-        // Windows - Java 8 with recent LTS
-        // Linux - Java 11 with recent LTS
-        [ platform: "linux", jdk: "8", jenkins: null ],
-        // [ platform: "windows", jdk: "8", jenkins: null ],
-        // [ platform: "linux", jdk: "8", jenkins: recentLTS, javaLevel: "8" ],
-        [ platform: "windows", jdk: "8", jenkins: recentLTS, javaLevel: "8" ],
-        [ platform: "linux", jdk: "11", jenkins: recentLTS, javaLevel: "8" ],
-        // [ platform: "windows", jdk: "11", jenkins: recentLTS, javaLevel: "8" ]
-    ]
-    return configurations
+    null
 }
 
 /**

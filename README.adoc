@@ -28,7 +28,9 @@ buildPlugin()
 ==== Optional arguments
 
 * `repo` (default: `null`  inherit from Multibranch) - custom Git repository to check out
-* `useAci` (default: `false`) - uses link:https://azure.microsoft.com/en-us/services/container-instances/[Azure Container Instances] for build instead of link:https://azure.microsoft.com/en-us/services/virtual-machines/[Azure Virtual Machines].
+* `useContainerAgent` (default: `false`) - uses a link:https://github.com/jenkins-infra/documentation/blob/main/ci.adoc#container-agents[Container agent] instead of a Virtual Machine: usually faster to start and generates less costs for the project
+** Please note that the implementation of "containers" can be changed over time
+* `useAci` (DEPRECATED - see `useContainerAgent`)
 * `failFast` (default: `true`) - instruct Maven tests to fail fast
 * `platforms` (default: `['linux', 'windows']`) - Labels matching platforms to
   execute the steps against in parallel
@@ -46,17 +48,8 @@ buildPlugin()
 buildPlugin(/*...*/, configurations: [
   [ platform: "linux", jdk: "8", jenkins: null ],
   [ platform: "windows", jdk: "8", jenkins: null ],
-  [ platform: "linux", jdk: "11", jenkins: "2.150", javaLevel: 8 ]
+  [ platform: "linux", jdk: "11", jenkins: "2.150" ]
 ])
-----
-
-** It is also possible to use a `buildPlugin.recommendedConfigurations()` method to get recommended configurations for testing.
-Note that the recommended configuration may change over time,
-and hence your CI may break if the new recommended configuration is not compatible
-+
-[source,groovy]
-----
-buildPlugin(/*...*/, configurations: buildPlugin.recommendedConfigurations())
 ----
 
 * `tests`: (default: `null`) - a map of parameters to run tests during the build. The test results and the JaCoCo code
@@ -111,15 +104,6 @@ buildPluginWithGradle(/*...*/, configurations: [
 ])
 ----
 
-** It is also possible to use a `buildPlugin.recommendedConfigurations()` method to get recommended configurations for testing.
-Note that the recommended configuration may change over time,
-and hence your CI may break if the new recommended configuration is not compatible
-+
-[source,groovy]
-----
-buildPluginWithGradle(/*...*/, configurations: buildPlugin.recommendedConfigurations())
-----
-
 * `tests`: (default: `null`) - a map of parameters to run tests during the build
 ** `skip` - If `true`, skip all the tests.
 * `timeout`: (default: `60`) - the number of minutes for build timeout, cannot be bigger than 180, i.e. 3 hours.
@@ -131,7 +115,7 @@ Examples of not supported features:
 
 * Deployment of incremental versions (link:https://github.com/jenkinsci/jep/tree/master/jep/305[JEP-305])
 * Publishing of static analysis and coverage reports (Checkstyle, SpotBugs, JaCoCo)
-* Configuring `jenkinsVersion` and `javaLevel` for the build flow (as standalone arguments or as `configurations`)
+* Configuring `jenkinsVersion` for the build flow (as standalone arguments or as `configurations`)
 * Usage of link:https://azure.microsoft.com/en-us/services/container-instances/[Azure Container Instances] as agents (only Maven agents are configured)
 
 === infra.isTrusted()
@@ -465,4 +449,4 @@ The design and some more details about the runATH and runPCT steps can be found 
 * (Open)JDK v8
 * Maven 3.6.x
 
-=== 
+===
