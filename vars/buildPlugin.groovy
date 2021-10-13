@@ -65,7 +65,7 @@ def call(Map params = [:]) {
                             isMaven = fileExists('pom.xml')
                             incrementals = fileExists('.mvn/extensions.xml') &&
                                     readFile('.mvn/extensions.xml').contains('git-changelist-maven-extension')
-                            skipTests = skipTestsIfNoRelevantChanges(skipTests)
+                            // skipTests = skipTestsIfNoRelevantChanges(skipTests)
                             if (incrementals) { // Incrementals needs 'git status -s' to be empty at start of job
                                 if (isUnix()) {
                                     sh(script: 'git clean -xffd > /dev/null 2>&1',
@@ -108,9 +108,9 @@ def call(Map params = [:]) {
                                 if (jenkinsVersion) {
                                     mavenOptions += "-Djenkins.version=${jenkinsVersion} -Daccess-modifier-checker.failOnError=false"
                                 }
-                                if (skipTests) {
-                                    mavenOptions += "-DskipTests"
-                                }
+                                // if (skipTests) {
+                                //     mavenOptions += "-DskipTests"
+                                // }
                                 mavenOptions += "clean install"
                                 try {
                                     infra.runMaven(mavenOptions, jdk, null, null, addToolEnv)
