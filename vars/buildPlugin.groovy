@@ -48,7 +48,7 @@ def call(Map params = [:]) {
     }
 
     tasks[stageIdentifier] = {
-      retry(count: 3, conditions: [kubernetesAgent(handleNonKubernetes: true), nonresumable()]) {
+      retry(count: 3, conditions: [nonresumable()]) {
         node(label) {
           try {
             timeout(timeoutValue) {
