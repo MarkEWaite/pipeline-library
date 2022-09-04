@@ -1,16 +1,19 @@
+# Detect Windows (only OS separating paths in $PATH with ";") to set specific variable and function to get compatible paths
+ifeq '$(findstring ;,$(PATH))' ';'
+	FixPath = $(subst /,\,$1)
+	IMAGE_DIR ?= .
+else
+	FixPath = $1
+	IMAGE_DIR ?= $(PWD)
+endif
 
 IMAGE_NAME ?= helloworld
 IMAGE_DEPLOY_NAME ?= $(IMAGE_NAME)
-IMAGE_DIR ?= $(PWD)
-IMAGE_DOCKERFILE ?= $(IMAGE_DIR)/Dockerfile
-IMAGE_ARCHIVE ?= $(IMAGE_DIR)/image.tar
 IMAGE_PLATFORM ?= linux/amd64
+# Paths
+IMAGE_DOCKERFILE ?= $(IMAGE_DIR)/Dockerfile
 HADOLINT_REPORT ?= $(IMAGE_DIR)/hadolint.json
 TEST_HARNESS ?= $(IMAGE_DIR)/cst.yml
-
-## Use this variable if you want to use Docker instead
-CONTAINER_BIN ?= img
-
 
 ## Image metadatas
 GIT_COMMIT_REV ?= $(shell git log -n 1 --pretty=format:'%h')
@@ -19,20 +22,20 @@ SCM_URI ?= $(subst git@github.com:,https://github.com/,$(GIT_SCM_URL))
 BUILD_DATE ?= $(shell date --utc '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || gdate --utc '+%Y-%m-%dT%H:%M:%S')
 
 help: ## Show this Makefile's help
+	@echo "Help:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
 all: clean lint build test ## Execute the complete process except the "deploy" step
 
 lint: ## Lint the $(IMAGE_DOCKERFILE) content
-	@echo "== Linting $(IMAGE_DOCKERFILE)..."
-	@echo "Writing Lint results to $(HADOLINT_REPORT)"
-	@hadolint --format=json $(IMAGE_DOCKERFILE) > $(HADOLINT_REPORT)
-	@echo "== Lint ✅ Succeeded"
+	@echo "== Linting $(call FixPath,$(IMAGE_DOCKERFILE)) with hadolint:"
+	hadolint --format=json "$(call FixPath,$(IMAGE_DOCKERFILE))" > "$(call FixPath,$(HADOLINT_REPORT))"
+	@echo "== Lint succeeded"
 
-build: ## Build the Docker Image $(IMAGE_NAME) from $(IMAGE_DOCKERFILE) and export it to $(IMAGE_ARCHIVE)
-	@echo "== Building $(IMAGE_NAME) from $(IMAGE_DOCKERFILE)..."
-	@$(CONTAINER_BIN) build \
-		-t $(IMAGE_NAME) \
+build: ## Build the Docker Image $(IMAGE_NAME) from $(IMAGE_DOCKERFILE)
+	@echo "== Building $(IMAGE_NAME) from $(call FixPath,$(IMAGE_DOCKERFILE)) with docker:"
+	docker build \
+		--tag $(IMAGE_NAME) \
 		--build-arg "GIT_COMMIT_REV=$(GIT_COMMIT_REV)" \
 		--build-arg "GIT_SCM_URL=$(GIT_SCM_URL)" \
 		--build-arg "BUILD_DATE=$(BUILD_DATE)" \
@@ -45,26 +48,25 @@ build: ## Build the Docker Image $(IMAGE_NAME) from $(IMAGE_DOCKERFILE) and expo
 		--label "org.opencontainers.image.created=$(BUILD_DATE)" \
 		--label "org.label-schema.build-date=$(BUILD_DATE)" \
 		--platform $(IMAGE_PLATFORM) \
-		-f $(IMAGE_DOCKERFILE) \
-		$(IMAGE_DIR)
-	@$(CONTAINER_BIN) save --output=$(IMAGE_ARCHIVE) $(IMAGE_NAME)
-	@echo "== Build ✅ Succeeded, image $(IMAGE_NAME) exported to $(IMAGE_ARCHIVE)."
+		--file "$(call FixPath,$(IMAGE_DOCKERFILE))" \
+		"$(IMAGE_DIR)"
+	@echo "== Build succeeded"
 
 clean: ## Delete any file generated during the build steps
-	@echo "== Cleaning working directory from generated artefacts..."
-	@rm -f $(IMAGE_DIR)/*.tar $(HADOLINT_REPORT)
-	@echo "== Cleanup ✅ Succeeded"
+	@echo "== Cleaning working directory $(IMAGE_DIR) from generated artefacts:"
+	rm -f "$(call FixPath,$(IMAGE_DIR)/*.tar)" "$(HADOLINT_REPORT)"
+	@echo "== Cleanup succeeded"
 
-test: ## Execute the test harness on the Docker Image archive at $(IMAGE_ARCHIVE)
-	@echo "== Test $(IMAGE_NAME) with $(TEST_HARNESS) from $(IMAGE_ARCHIVE)..."
-	@container-structure-test test --driver=tar --image=$(IMAGE_ARCHIVE) --config=$(TEST_HARNESS)
-	@echo "== Test ✅ Succeeded"
+test: ## Execute the test harness on the Docker Image
+	@echo "== Test $(IMAGE_NAME) with $(call FixPath,$(TEST_HARNESS)) from $(IMAGE_NAME) with container-structure-test:"
+	container-structure-test test --driver=docker --image="$(IMAGE_NAME)" --config="$(call FixPath,$(TEST_HARNESS))"
+	@echo "== Test succeeded"
 
 ## This steps expects that you are logged to the Docker registry to push image into
 deploy: ## Tag and push the built image as specified by $(IMAGE_DEPLOY).
-	@echo "== Deploying $(IMAGE_NAME) to $(IMAGE_DEPLOY_NAME)..."
-	$(CONTAINER_BIN) tag $(IMAGE_NAME) $(IMAGE_DEPLOY_NAME)
-	$(CONTAINER_BIN) push $(IMAGE_DEPLOY_NAME)
-	@echo "== Deploy ✅ Succeeded"
+	@echo "== Deploying $(IMAGE_NAME) to $(IMAGE_DEPLOY_NAME) with docker:"
+	docker tag $(IMAGE_NAME) $(IMAGE_DEPLOY_NAME)
+	docker push $(IMAGE_DEPLOY_NAME)
+	@echo "== Deploy succeeded"
 
 .PHONY: all clean lint build test deploy
