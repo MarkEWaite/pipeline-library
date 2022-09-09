@@ -37,7 +37,7 @@ def call(Map params = [:]) {
     String stageIdentifier = "${label}-${jdk}${jenkinsVersion ? '-' + jenkinsVersion : ''}"
     boolean first = tasks.size() == 1
     boolean skipTests = params?.tests?.skip
-    boolean addToolEnv = !useContainerAgent
+    boolean addToolEnv = true // !useContainerAgent in upstream - always define tool env in mwaite cluster
 
     if (useContainerAgent && (label == 'linux' || label == 'windows')) {
       def agentContainerLabel = jdk == '8' ? 'maven' : 'maven-' + jdk
