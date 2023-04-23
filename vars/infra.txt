@@ -11,6 +11,12 @@
     Return true if this Pipeline is executing on a trusted CI environment.
 </p>
 
+<strong>infra.isRelease()</strong>
+
+<p>
+    Return true if this Pipeline is executing on the Jenkins release CI environment.
+</p>
+
 <strong>infra.isInfra()</strong>
 
 <p>
@@ -31,35 +37,41 @@
     Either this must be used as part of a Multibranch Pipeline or a repository argument must be provided.
 </p>
 
-<strong>infra.retrieveMavenSettingsFile(String settingsXml)</strong>
+<strong>infra.withArtifactCachingProxy(boolean useArtifactCachingProxy = true, Closure body)</strong>
 
 <p>
-    Retrieve a custom Maven settings file to the specified path if needed
-    (depending on the environment where the Pipeline runs),
-    returning true if the file has been retrieved.
-    <strong>Note:</strong> currently does not return an interesting file.
+    Execute the body passed as closure with a Maven settings file using the
+    Artifact Caching Proxy provider corresponding to the requested one defined
+    via the agent's env.ARTIFACT_CACHING_PROXY variable, or 'azure' if not defined.
+    This allows decreasing JFrog Artifactory bandwidth consumption, and increase reliability.
+    There are currently three providers, one for each cloud used in Jenkins Infrastructure:
+    "aws", "azure" and "do" (DigitalOcean).
+    The available providers can be restricted by setting a global ARTIFACT_CACHING_PROXY_AVAILABLE_PROVIDERS
+    variable on the Jenkins controller, with providers separated by a comma. Ex: 'aws,do' if the Azure provider is unavailable.
+    A 'skip-artifact-caching-proxy' label can be added to pull request in order to punctually disable it.
+    When calling this function with its boolean parameter to false, it does nothing.
 </p>
 
 <p>
     See the method Javadoc in the repository for more information.
 </p>
 
-<strong>infra.runMaven(List&lt;String&gt; options, String jdk = '8', List&lt;String&gt; extraEnv = null, String settingsFile = null, Boolean addToolEnv = true)</strong>
+<strong>infra.runMaven(List&lt;String&gt; options, String jdk = '8', List&lt;String&gt; extraEnv = null, Boolean addToolEnv = true, Boolean useArtifactCachingProxy = true)</strong>
 
 <p>
     Run Maven with the specified options in the current workspace.
-    If <code>settingsFile</code> is <code>null</code>, Maven settings will be added using <code>infra.retrieveMavenSettingsFile()</code>.
+    If <code>useArtifactCachingProxy</code> is <code>true</code>, Maven settings will be added using <code>infra.withArtifactCachingProxy()</code> if possible (i.e. the provider is available, reachable and not skipped).
 </p>
 
 <p>
     See the method Javadoc in the repository for more information.
 </p>
 
-<strong>runMaven(List&lt;String&gt; options, Integer jdk, List&lt;String&gt; extraEnv = null, String settingsFile = null, Boolean addToolEnv = true)</strong>
+<strong>infra.runMaven(List&lt;String&gt; options, Integer jdk, List&lt;String&gt; extraEnv = null, Boolean addToolEnv = true, Boolean useArtifactCachingProxy = true)</strong>
 
 <p>
     Run Maven with the specified options in the current workspace.
-    If <code>settingsFile</code> is <code>null</code>, Maven settings will be added using <code>infra.retrieveMavenSettingsFile()</code>.
+    If <code>useArtifactCachingProxy</code> is <code>true</code>, Maven settings will be added using <code>infra.withArtifactCachingProxy()</code> if possible (i.e. the provider is available, reachable and not skipped).
 </p>
 
 <p>
@@ -87,12 +99,6 @@
 
 <p>
     See the method Javadoc in the repository for more information.
-</p>
-
-<strong>infra.stashJenkinsWar(String jenkins, String stashName)</strong>
-
-<p>
-    Get a specification for a Jenkins version or WAR, download it, and stash it under the name provided.
 </p>
 
 <strong>infra.ensureInNode(nodeLabels, body)</strong>

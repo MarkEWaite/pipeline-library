@@ -1,5 +1,6 @@
 import mock.CurrentBuild
 import mock.Infra
+import mock.Launchable
 import org.junit.Before
 import org.junit.Test
 import static org.junit.Assert.assertEquals
@@ -18,6 +19,8 @@ class BuildPluginStepTests extends BaseTest {
     helper.registerAllowedMethod('fileExists', [String.class], { s -> return s.equals('pom.xml') })
     env.NODE_LABELS = 'docker'
     env.JOB_NAME = 'build/plugin/test'
+    // Testing by default on the primary branch
+    env.BRANCH_IS_PRIMARY = true
   }
 
   @Test
@@ -288,21 +291,62 @@ class BuildPluginStepTests extends BaseTest {
   }
 
   @Test
-  void test_buildPlugin_with_coverage() throws Exception {
+  void test_buildPlugin_with_record_coverage_defaults() throws Exception {
     def script = loadScript(scriptName)
     script.call()
     printCallStack()
 
-    assertTrue(assertMethodCallContainsPattern('publishCoverage', '{calculateDiffForChangeRequests=true, adapters=[jacoco]}'))
+    assertTrue(assertMethodCall('recordCoverage'))
+    assertDefaultRecordCoverageWithJaCoCo()
+  }
+
+  private assertDefaultRecordCoverageWithJaCoCo() {
+    assertTrue(assertMethodCallContainsPattern('recordCoverage', '{tools=[{parser=JACOCO, pattern=**/jacoco/jacoco.xml}], sourceCodeRetention=MODIFIED}'))
+  }
+
+  @Test
+  void test_buildPlugin_with_record_coverage_custom() throws Exception {
+    def script = loadScript(scriptName)
+    script.call(jacoco: [sourceCodeRetention: 'EVERY_BUILD', sourceDirectories: [[path: 'plugin/src/main/java']]])
+    printCallStack()
+
+    assertTrue(assertMethodCall('recordCoverage'))
+    assertTrue(assertMethodCallContainsPattern('recordCoverage', '{tools=[{parser=JACOCO, pattern=**/jacoco/jacoco.xml}], sourceCodeRetention=EVERY_BUILD, sourceDirectories=[{path=plugin/src/main/java}]}'))
+  }
+
+  @Test
+  void test_buildPlugin_with_record_coverage_pit_default() throws Exception {
+    def script = loadScript(scriptName)
+    script.call(pit: [skip: false])
+    printCallStack()
+
+    assertTrue(assertMethodCall('recordCoverage'))
+    assertDefaultRecordCoverageWithJaCoCo()
+
+    assertTrue(assertMethodCallContainsPattern('recordCoverage', '{tools=[{parser=PIT, pattern=**/pit-reports/mutations.xml}], id=pit, name=Mutation Coverage, sourceCodeRetention=MODIFIED}'))
+  }
+
+  @Test
+  void test_buildPlugin_with_record_coverage_pit_custom() throws Exception {
+    def script = loadScript(scriptName)
+    script.call(pit: [sourceCodeRetention: 'EVERY_BUILD', name: 'PIT', sourceDirectories: [[path: 'plugin/src/main/java']]])
+    printCallStack()
+
+    assertTrue(assertMethodCall('recordCoverage'))
+    assertDefaultRecordCoverageWithJaCoCo()
+
+    assertTrue(assertMethodCallContainsPattern('recordCoverage', '{tools=[{parser=PIT, pattern=**/pit-reports/mutations.xml}], id=pit, name=PIT, sourceCodeRetention=EVERY_BUILD, sourceDirectories=[{path=plugin/src/main/java}]}'))
   }
 
   @Test
   void test_buildPlugin_with_configurations_and_incrementals() throws Exception {
     def script = loadScript(scriptName)
+    binding.setProperty('launchable', new Launchable())
     // when running with incrementals
     helper.registerAllowedMethod('fileExists', [String.class], { s ->
       return s.equals('.mvn/extensions.xml') || s.equals('pom.xml')
     })
+    helper.registerAllowedMethod('launchable', [String.class], null)
     helper.addReadFileMock('.mvn/extensions.xml', 'git-changelist-maven-extension')
     // and no jenkins version
     script.call(configurations: [['platform': 'linux', 'jdk': 8, 'jenkins': null]])

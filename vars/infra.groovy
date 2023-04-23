@@ -1,6 +1,8 @@
 #!/usr/bin/env groovy
 
 import io.jenkins.infra.InfraConfig
+import jenkins.scm.api.SCMSource
+import com.cloudbees.groovy.cps.NonCPS
 
 // Method kept for backward compatibility (as the method is available on the InfraConfig stateful object)
 Boolean isRunningOnJenkinsInfra() {
@@ -10,6 +12,11 @@ Boolean isRunningOnJenkinsInfra() {
 // Method kept for backward compatibility (as the method is available on the InfraConfig stateful object)
 Boolean isTrusted() {
   return new InfraConfig(env).isTrusted()
+}
+
+// Method kept for backward compatibility (as the method is available on the InfraConfig stateful object)
+Boolean isRelease() {
+  return new InfraConfig(env).isRelease()
 }
 
 // Method kept for backward compatibility (as the method is available on the InfraConfig stateful object)
@@ -77,30 +84,71 @@ Object checkoutSCM(String repo = null) {
 }
 
 /**
- * Retrieves Settings file to be used with Maven.
- * If {@code MAVEN_SETTINGS_FILE_ID} variable is defined, the file will be retrieved from the specified
- * configuration ID provided by Config File Provider Plugin.
- * Otherwise it will fallback to some unspecified file for Jenkins infrastructure (currently empty).
- * @param settingsXml Absolute path to the destination settings file
- * @param jdk Version of JDK to be used (no longer used)
- * @return {@code true} if the file has been defined
+ * Execute the body passed as closure with a Maven settings file using the
+ * Artifact Caching Proxy provider corresponding to the requested one defined
+ * via the agent's env.ARTIFACT_CACHING_PROXY variable, or 'azure' if not defined.
+ * This allows decreasing JFrog Artifactory bandwidth consumption, and increase reliability.
+ * There are currently three providers, one for each cloud used in Jenkins Infrastructure:
+ * "aws", "azure" and "do" (DigitalOcean).
+ * The available providers can be restricted by setting a global ARTIFACT_CACHING_PROXY_AVAILABLE_PROVIDERS
+ * variable on the Jenkins controller, with providers separated by a comma. Ex: 'aws,do' if the Azure provider is unavailable.
+ * A 'skip-artifact-caching-proxy' label can be added to pull request in order to punctually disable it.
+ * @param useArtifactCachingProxy (default: true) if possible, use an artifact caching proxy in front of repo.jenkins-ci.org to decrease JFrog Artifactory bandwidth usage and to increase reliability
  */
-boolean retrieveMavenSettingsFile(String settingsXml) {
-  if (env.MAVEN_SETTINGS_FILE_ID) {
-    configFileProvider([configFile(fileId: env.MAVEN_SETTINGS_FILE_ID, variable: 'mvnSettingsFile')]) {
+Object withArtifactCachingProxy(boolean useArtifactCachingProxy = true, Closure body) {
+  // As the env var ARTIFACT_CACHING_PROXY_PROVIDER can't be set on Azure VM agents,
+  // we're specifying a default provider if none is specified.
+  final String requestedProxyProvider = env.ARTIFACT_CACHING_PROXY_PROVIDER ?: 'azure'
+  final String[] validProxyProviders = ['aws', 'azure', 'do']
+  // Useful when a provider is in maintenance (or similar cases), add a global env var in Jenkins controller settings to restrict them.
+  // To completely disable the artifact caching proxies, this value can be set to a value absent of validProxyProviders like "none" for example.
+  final String configuredAvailableProxyProviders = env.ARTIFACT_CACHING_PROXY_AVAILABLE_PROVIDERS ?: validProxyProviders.join(',')
+  final String[] availableProxyProviders = configuredAvailableProxyProviders.split(',')
+
+  // Check if the requested provider is invalid or unavailable
+  if (useArtifactCachingProxy && (!validProxyProviders.contains(requestedProxyProvider) || !availableProxyProviders.contains(requestedProxyProvider))) {
+    echo "WARNING: invalid or unavailable artifact caching proxy provider '${requestedProxyProvider}' requested by the agent, will use repo.jenkins-ci.org"
+    useArtifactCachingProxy = false
+  }
+
+  // If the build concerns a pull request, check if there is "skip-artifact-caching-proxy" label applied in case the user doesn't want ACP
+  if (useArtifactCachingProxy && env.CHANGE_URL && pullRequest != null) {
+    final String skipACPLabel = 'skip-artifact-caching-proxy'
+    // Note: the pullRequest object is provided by https://github.com/jenkinsci/pipeline-github-plugin
+    if (pullRequest.labels.contains(skipACPLabel)) {
+      echo "INFO: the label '$skipACPLabel' has been applied to the pull request, will use repo.jenkins-ci.org"
+      useArtifactCachingProxy = false
+    }
+  }
+
+  // Check if the artifact caching proxy provider is unreachable
+  if (useArtifactCachingProxy) {
+    boolean healthCheckFailed = false
+    withEnv(["HEALTHCHECK=https://repo.${requestedProxyProvider}.jenkins.io/health"]) {
       if (isUnix()) {
-        sh "cp ${mvnSettingsFile} ${settingsXml}"
+        healthCheckFailed = sh(script: 'curl --fail --silent --show-error --location $HEALTHCHECK', returnStatus: true) != 0
       } else {
-        bat "copy ${mvnSettingsFile} ${settingsXml}"
+        healthCheckFailed = bat(script: 'curl --fail --silent --show-error --location %HEALTHCHECK%', returnStatus: true) != 0
       }
     }
-    return true
-  } else if (new InfraConfig(env).isRunningOnJenkinsInfra()) {
-    echo 'NOTE: infra.retrieveMavenSettingsFile currently writes an empty settings file.'
-    writeFile file: settingsXml, text: libraryResource('settings.xml')
-    return true
+    if (healthCheckFailed) {
+      echo "WARNING: the artifact caching proxy from '${requestedProxyProvider}' provider isn't reachable, will use repo.jenkins-ci.org"
+      useArtifactCachingProxy = false
+    }
   }
-  return false
+
+  // Use the Maven settings with artifact caching proxy config and private auth if everything is still OK
+  if (useArtifactCachingProxy) {
+    echo "INFO: using artifact caching proxy from '${requestedProxyProvider}' provider."
+    configFileProvider(
+        [configFile(fileId: "artifact-caching-proxy-${requestedProxyProvider}", variable: 'MAVEN_SETTINGS')]) {
+          withEnv(["MAVEN_ARGS=-s $env.MAVEN_SETTINGS"]) {
+            body()
+          }
+        }
+  } else {
+    body()
+  }
 }
 
 /**
@@ -109,17 +157,17 @@ boolean retrieveMavenSettingsFile(String settingsXml) {
  * @param jdk JDK to be used
  * @param options Options to be passed to the Maven command
  * @param extraEnv Extra environment variables to be passed when invoking the command
- * @see #retrieveMavenSettingsFile(String)
+ * @param useArtifactCachingProxy (default: true) if possible, use an artifact caching proxy in front of repo.jenkins-ci.org to decrease JFrog Artifactory bandwidth usage and to increase reliability
+ * @see withArtifactCachingProxy
  */
-Object runMaven(List<String> options, String jdk = '8', List<String> extraEnv = null, String settingsFile = null, Boolean addToolEnv = true) {
+Object runMaven(List<String> options, String jdk = '8', List<String> extraEnv = null, Boolean addToolEnv = true, Boolean useArtifactCachingProxy = true) {
   List<String> mvnOptions = ['--batch-mode', '--show-version', '--errors', '--no-transfer-progress']
-  if (settingsFile) {
-    mvnOptions += "-s $settingsFile"
+  withArtifactCachingProxy(useArtifactCachingProxy) {
+    mvnOptions.addAll(options)
+    mvnOptions.unique()
+    String command = "mvn ${mvnOptions.join(' ')}"
+    runWithMaven(command, jdk, extraEnv, addToolEnv)
   }
-  mvnOptions.addAll(options)
-  mvnOptions.unique()
-  String command = "mvn ${mvnOptions.join(' ')}"
-  runWithMaven(command, jdk, extraEnv, addToolEnv)
 }
 
 /**
@@ -128,10 +176,12 @@ Object runMaven(List<String> options, String jdk = '8', List<String> extraEnv = 
  * @param Major version of JDK to be used (integer)
  * @param options Options to be passed to the Maven command
  * @param extraEnv Extra environment variables to be passed when invoking the command
- * @see #retrieveMavenSettingsFile(String)
+ * @param settingsFile specific Maven settings.xml filepath, not taken in account if useArtifactCachingProxy is true
+ * @param useArtifactCachingProxy (default: true) if possible, use an artifact caching proxy in front of repo.jenkins-ci.org to decrease JFrog Artifactory bandwidth usage and to increase reliability
+ * @see withArtifactCachingProxy
  */
-Object runMaven(List<String> options, Integer jdk, List<String> extraEnv = null, String settingsFile = null, Boolean addToolEnv = true) {
-  runMaven(options, jdk.toString(), extraEnv, settingsFile, addToolEnv)
+Object runMaven(List<String> options, Integer jdk, List<String> extraEnv = null, Boolean addToolEnv = true, Boolean useArtifactCachingProxy = true) {
+  runMaven(options, jdk.toString(), extraEnv, addToolEnv, useArtifactCachingProxy)
 }
 
 /**
@@ -218,69 +268,12 @@ Object runWithJava(String command, String jdk = '8', List<String> extraEnv = nul
   }
 
   withEnv(javaEnv) {
-    if (isUnix()) { // TODO JENKINS-44231 candidate for simplification
+    if (isUnix()) {
+      // TODO JENKINS-44231 candidate for simplification
       sh command
     } else {
       bat command
     }
-  }
-}
-
-/**
- * Gets a specification for a jenkins version or war and downloads and stash it under the name provided
- * @param Specification for a jenkins war, can be a jenkins URI to the jenkins.war, a Jenkins version or one of "latest", "latest-rc", "lts" and "lts-rc". Defaults to "latest". For local war files use the file:// protocol
- * @param stashName The name used to stash the jenkins war file, defaults to "jenkinsWar"
- */
-void stashJenkinsWar(String jenkins, String stashName = 'jenkinsWar') {
-  def isVersionNumber = (jenkins =~ /^\d+([.]\d+)*(-rc[0-9]+[.][0-9a-f]{12})?$/).matches()
-  def isLocalJenkins = jenkins.startsWith('file://')
-  def mirror = 'https://get.jenkins.io/'
-
-  def jenkinsURL
-
-  if (jenkins == 'latest') {
-    jenkinsURL = mirror + 'war/latest/jenkins.war'
-  } else if (jenkins == 'latest-rc') {
-    jenkinsURL = mirror + '/war-rc/latest/jenkins.war'
-  } else if (jenkins == 'lts') {
-    jenkinsURL = mirror + 'war-stable/latest/jenkins.war'
-  } else if (jenkins == 'lts-rc') {
-    jenkinsURL = mirror + 'war-stable-rc/latest/jenkins.war'
-  }
-
-  if (isLocalJenkins) {
-    if (!fileExists(jenkins - 'file://')) {
-      error 'Specified Jenkins file does not exists'
-    }
-  }
-  if (!isVersionNumber && !isLocalJenkins) {
-    if (!jenkinsURL) {
-      error "Not sure how to interpret $jenkins as a version, alias, or URL"
-    }
-    echo 'Checking whether Jenkins WAR is available…'
-    sh "curl -ILf ${jenkinsURL}"
-  }
-
-  if (isVersionNumber) {
-    List<String> downloadCommand = [
-      'dependency:copy',
-      "-Dartifact=org.jenkins-ci.main:jenkins-war:${jenkins}:war",
-      '-DoutputDirectory=.',
-      '-Dmdep.stripVersion=true',
-    ]
-    dir('deps') {
-      runMaven(downloadCommand)
-      sh 'cp jenkins-war.war jenkins.war'
-      stash includes: 'jenkins.war', name: stashName
-    }
-  } else if (isLocalJenkins) {
-    dir(pwd(tmp: true)) {
-      sh "cp ${jenkins - 'file://'} jenkins.war"
-      stash includes: '*.war', name: 'jenkinsWar'
-    }
-  } else {
-    sh("curl -o jenkins.war -L ${jenkinsURL}")
-    stash includes: '*.war', name: 'jenkinsWar'
   }
 }
 

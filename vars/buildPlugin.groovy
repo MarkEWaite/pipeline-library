@@ -12,6 +12,7 @@ def call(Map params = [:]) {
   def failFast = params.containsKey('failFast') ? params.failFast : true
   def timeoutValue = params.containsKey('timeout') ? params.timeout : 60
   def gitDefaultBranch = params.containsKey('gitDefaultBranch') ? params.gitDefaultBranch : null
+  def useArtifactCachingProxy = params.containsKey('useArtifactCachingProxy') ? params.useArtifactCachingProxy : true
 
   def useContainerAgent = params.containsKey('useContainerAgent') ? params.useContainerAgent : false
   if (params.containsKey('useAci')) {
@@ -27,24 +28,39 @@ def call(Map params = [:]) {
   boolean archivedArtifacts = false
   Map tasks = [failFast: failFast]
   getConfigurations(params).each { config ->
-    String label = config.platform
+    String label = ''
+    String platform = config.platform
     String jdk = config.jdk
     String jenkinsVersion = config.jenkins
     if (config.containsKey('javaLevel')) {
       infra.publishDeprecationCheck('Remove javaLevel', 'Ignoring deprecated "javaLevel" parameter. This parameter should be removed from your "Jenkinsfile".')
     }
 
-    String stageIdentifier = "${label}-${jdk}${jenkinsVersion ? '-' + jenkinsVersion : ''}"
+    String stageIdentifier = "${platform}-${jdk}${jenkinsVersion ? '-' + jenkinsVersion : ''}"
     boolean first = tasks.size() == 1
     boolean skipTests = params?.tests?.skip
     boolean addToolEnv = true // !useContainerAgent in upstream - always define tool env in mwaite cluster
 
-    if (useContainerAgent && (label == 'linux' || label == 'windows')) {
-      def agentContainerLabel = jdk == '8' ? 'maven' : 'maven-' + jdk
-      if (label == 'windows') {
-        agentContainerLabel += '-windows'
+    if (useContainerAgent) {
+      if (platform == 'linux' || platform == 'windows') {
+        def agentContainerLabel = jdk == '8' ? 'maven' : 'maven-' + jdk
+        if (platform == 'windows') {
+          agentContainerLabel += '-windows'
+        }
+        label = agentContainerLabel
       }
-      label = agentContainerLabel
+    } else {
+      switch(platform) {
+        case 'windows':
+          label = 'docker-windows'
+          break
+        case 'linux':
+          label = 'vm && linux'
+          break
+        default:
+          echo "WARNING: Unknown platform '${platform}'. Agent label set to fallback value 'linux'"
+          label = 'linux'
+      }
     }
 
     tasks[stageIdentifier] = {
@@ -67,7 +83,8 @@ def call(Map params = [:]) {
                     readFile('.mvn/extensions.xml').contains('git-changelist-maven-extension')
                 final String gitUnavailableMessage = '[buildPlugin] Git CLI may not be available'
                 withEnv(["GITUNAVAILABLEMESSAGE=${gitUnavailableMessage}"]) {
-                  if (incrementals) { // Incrementals needs 'git status -s' to be empty at start of job
+                  if (incrementals) {
+                    // Incrementals needs 'git status -s' to be empty at start of job
                     if (isUnix()) {
                       sh 'git clean -xffd || echo "$GITUNAVAILABLEMESSAGE"'
                     } else {
@@ -106,9 +123,11 @@ def call(Map params = [:]) {
                   if (isUnix()) {
                     mavenOptions += '-Penable-jacoco'
                   }
-                  if (incrementals) { // set changelist and activate produce-incrementals profile
+                  if (incrementals) {
+                    // set changelist and activate produce-incrementals profile
                     mavenOptions += '-Dset.changelist'
-                    if (doArchiveArtifacts) { // ask Maven for the value of -rc999.abc123def456
+                    if (doArchiveArtifacts) {
+                      // ask Maven for the value of -rc999.abc123def456
                       changelistF = "${pwd tmp: true}/changelist"
                       mavenOptions += "help:evaluate -Dexpression=changelist -Doutput=$changelistF"
                     }
@@ -120,14 +139,31 @@ def call(Map params = [:]) {
                     mavenOptions += '-DskipTests'
                   }
                   mavenOptions += 'clean install'
+                  def pit = params?.pit as Map ?: [:]
+                  def runWithPit = pit.containsKey('skip') && !pit['skip'] // use same convention as in tests.skip
+                  if (runWithPit && first) {
+                    mavenOptions += '-Ppit'
+                  }
                   try {
-                    infra.runMaven(mavenOptions, jdk, null, null, addToolEnv)
+                    infra.runMaven(mavenOptions, jdk, null, addToolEnv, useArtifactCachingProxy)
                   } finally {
                     if (!skipTests) {
                       junit('**/target/surefire-reports/**/*.xml,**/target/failsafe-reports/**/*.xml,**/target/invoker-reports/**/*.xml')
                       if (first) {
                         discoverReferenceBuild()
-                        publishCoverage calculateDiffForChangeRequests: true, adapters: [jacocoAdapter('**/target/site/jacoco/jacoco.xml')]
+                        // Default configuration for JaCoCo can be overwritten using a `jacoco` parameter (map).
+                        // Configuration see: https://www.jenkins.io/doc/pipeline/steps/code-coverage-api/#recordcoverage-record-code-coverage-results
+                        Map jacocoArguments = [tools: [[parser: 'JACOCO', pattern: '**/jacoco/jacoco.xml']], sourceCodeRetention: 'MODIFIED']
+                        if (params?.jacoco) {
+                          jacocoArguments.putAll(params.jacoco as Map)
+                        }
+                        recordCoverage jacocoArguments
+                        if (pit) {
+                          Map pitArguments = [tools: [[parser: 'PIT', pattern: '**/pit-reports/mutations.xml']], id: 'pit', name: 'Mutation Coverage', sourceCodeRetention: 'MODIFIED']
+                          pitArguments.putAll(pit)
+                          pitArguments.remove('skip')
+                          recordCoverage(pitArguments)
+                        }
                       }
                     }
                   }
@@ -162,7 +198,8 @@ def call(Map params = [:]) {
                 }
 
                 if (first) {
-                  if (skipTests) { // otherwise the reference build has been computed already
+                  if (skipTests) {
+                    // otherwise the reference build has been computed already
                     discoverReferenceBuild()
                   }
                   echo "Recording static analysis results on '${stageIdentifier}'"
@@ -234,6 +271,21 @@ def call(Map params = [:]) {
                       )
                   if (failFast && currentBuild.result == 'UNSTABLE') {
                     error 'Static analysis quality gates not passed; halting early'
+                  }
+                  /*
+                   * If the current build was successful, we send the commits to Launchable so that
+                   * the result can be consumed by a Launchable build in the future. We do not
+                   * attempt to record commits for non-incrementalified plugins because such
+                   * plugins' PR builds could not be consumed by anything else anyway, and all
+                   * plugins currently in the BOM are incrementalified. We do not attempt to record
+                   * commits on Windows because our Windows agents do not have Python installed.
+                   */
+                  if (incrementals && platform != 'windows' && currentBuild.currentResult == 'SUCCESS') {
+                    launchable.install()
+                    withCredentials([string(credentialsId: 'launchable-jenkins-bom', variable: 'LAUNCHABLE_TOKEN')]) {
+                      launchable('verify')
+                      launchable('record commit')
+                    }
                   }
                 } else {
                   echo "Skipping static analysis results for ${stageIdentifier}"
