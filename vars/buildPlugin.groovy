@@ -113,7 +113,7 @@ def call(Map params = [:]) {
                   m2repo = "${pwd tmp: true}/m2repo"
                   List<String> mavenOptions = [
                     '--update-snapshots',
-                    "-Dmaven.repo.local=$m2repo",
+                    // "-Dmaven.repo.local=$m2repo",
                     '-Dmaven.test.failure.ignore',
                     '-Dspotbugs.failOnError=false',
                     '-Dcheckstyle.failOnViolation=false',
