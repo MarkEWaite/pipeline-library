@@ -281,7 +281,7 @@ def call(Map params = [:]) {
                    * plugins currently in the BOM are incrementalified. We do not attempt to record
                    * commits on Windows because our Windows agents do not have Python installed.
                    */
-                  if (incrementals && platform != 'windows' && currentBuild.currentResult == 'SUCCESS') {
+                  if (incrementals && platform != 'windows' && currentBuild.currentResult == 'SUCCESS' && false) { // No launchable upload from markwaite.net
                     launchable.install()
                     withCredentials([string(credentialsId: 'launchable-jenkins-bom', variable: 'LAUNCHABLE_TOKEN')]) {
                       launchable('verify')
