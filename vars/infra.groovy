@@ -277,6 +277,14 @@ Object runWithJava(String command, String jdk = '8', List<String> extraEnv = nul
   }
 }
 
+String gradleCommand(List<String> gradleOptions) {
+  String command = "gradlew ${gradleOptions.join(' ')}"
+  if (isUnix()) {
+    command = "./" + command
+  }
+  return command
+}
+
 /**
  * Make sure the code block is run in a node with the all the specified nodeLabels as labels, if already running in that
  * it simply executes the code block, if not allocates the desired node and runs the code inside it
@@ -334,6 +342,16 @@ void prepareToPublishIncrementals() {
  */
 void maybePublishIncrementals() {
   if (new InfraConfig(env).isRunningOnJenkinsInfra() && currentBuild.currentResult == 'SUCCESS') {
+    if (env.CHANGE_ID == null) {
+      def skip
+      catchError(message: 'Could not check whether repo has enabled CD', buildResult: 'SUCCESS', stageResult: 'UNSTABLE', catchInterruptions: false) {
+        skip = readTrusted('.mvn/maven.config').contains('changelist.format')
+      }
+      if (skip) {
+        echo 'Skipping Incrementals deployment for branch build of CD-enabled repo (helpdesk#3687)'
+        return
+      }
+    }
     stage('Deploy') {
       withCredentials([string(credentialsId: 'incrementals-publisher-token', variable: 'FUNCTION_TOKEN')]) {
         httpRequest url: 'https://incrementals.jenkins.io/',

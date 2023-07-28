@@ -1,6 +1,5 @@
 import mock.CurrentBuild
 import mock.Infra
-import mock.Launchable
 import org.junit.Before
 import org.junit.Test
 import static org.junit.Assert.assertEquals
@@ -199,34 +198,6 @@ class BuildPluginStepTests extends BaseTest {
   }
 
   @Test
-  void test_buildPlugin_with_defaults_with_gradle() throws Exception {
-    def script = loadScript(scriptName)
-    // when running in a non maven project
-    helper.registerAllowedMethod('fileExists', [String.class], { s -> return !s.equals('pom.xml') })
-    script.call([:])
-    printCallStack()
-    // then it runs the junit step with the no maven test format
-    assertTrue(assertMethodCallContainsPattern('junit', '**/build/test-results/**/*.xml'))
-  }
-
-  @Test
-  void test_buildPlugin_with_build_error_with_gradle() throws Exception {
-    def script = loadScript(scriptName)
-    binding.setProperty('infra', new Infra(buildError: true))
-    // when running in a non maven project
-    helper.registerAllowedMethod('fileExists', [String.class], { s -> return !s.equals('pom.xml') })
-    try {
-      script.call([:])
-    } catch (ignored) {
-      // intentionally left empty
-    }
-    printCallStack()
-    // it runs the junit step
-    assertTrue(assertMethodCall('junit'))
-    assertJobStatusFailure()
-  }
-
-  @Test
   void test_buildPlugin_with_failfast_and_unstable() throws Exception {
     def script = loadScript(scriptName)
     // when running with fail fast and it's UNSTABLE
@@ -369,12 +340,10 @@ class BuildPluginStepTests extends BaseTest {
   @Test
   void test_buildPlugin_with_configurations_and_incrementals() throws Exception {
     def script = loadScript(scriptName)
-    binding.setProperty('launchable', new Launchable())
     // when running with incrementals
     helper.registerAllowedMethod('fileExists', [String.class], { s ->
       return s.equals('.mvn/extensions.xml') || s.equals('pom.xml')
     })
-    helper.registerAllowedMethod('launchable', [String.class], null)
     helper.addReadFileMock('.mvn/extensions.xml', 'git-changelist-maven-extension')
     // and no jenkins version
     script.call(configurations: [['platform': 'linux', 'jdk': 8, 'jenkins': null]])

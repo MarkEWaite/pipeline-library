@@ -15,10 +15,6 @@ def call(Map params = [:]) {
   def useArtifactCachingProxy = params.containsKey('useArtifactCachingProxy') ? params.useArtifactCachingProxy : true
 
   def useContainerAgent = params.containsKey('useContainerAgent') ? params.useContainerAgent : false
-  if (params.containsKey('useAci')) {
-    infra.publishDeprecationCheck('Replace useAci with useContainerAgent', 'The parameter "useAci" is deprecated. Please use "useContainerAgent" instead as per https://issues.jenkins.io/browse/INFRA-2918.')
-    useContainerAgent = params.containsKey('useAci')
-  }
   if (timeoutValue > 180) {
     echo "Timeout value requested was $timeoutValue, lowering to 180 to avoid Jenkins project's resource abusive consumption"
     timeoutValue = 180
@@ -32,9 +28,6 @@ def call(Map params = [:]) {
     String platform = config.platform
     String jdk = config.jdk
     String jenkinsVersion = config.jenkins
-    if (config.containsKey('javaLevel')) {
-      infra.publishDeprecationCheck('Remove javaLevel', 'Ignoring deprecated "javaLevel" parameter. This parameter should be removed from your "Jenkinsfile".')
-    }
 
     String stageIdentifier = "${platform}-${jdk}${jenkinsVersion ? '-' + jenkinsVersion : ''}"
     boolean first = tasks.size() == 1
@@ -68,7 +61,6 @@ def call(Map params = [:]) {
         node(label) {
           try {
             timeout(timeoutValue) {
-              boolean isMaven
               // Archive artifacts once with pom declared baseline
               boolean doArchiveArtifacts = !jenkinsVersion && !archivedArtifacts
               if (doArchiveArtifacts) {
@@ -78,9 +70,8 @@ def call(Map params = [:]) {
 
               stage("Checkout (${stageIdentifier})") {
                 infra.checkoutSCM(repo)
-                isMaven = !fileExists('gradlew')
                 incrementals = fileExists('.mvn/extensions.xml') &&
-                    readFile('.mvn/extensions.xml').contains('git-changelist-maven-extension')
+                    readFile('.mvn/extensions.xml').contains('git-changelist-maven-extension') && false // No incrementals on markwaite.net
                 final String gitUnavailableMessage = '[buildPlugin] Git CLI may not be available'
                 withEnv(["GITUNAVAILABLEMESSAGE=${gitUnavailableMessage}"]) {
                   if (incrementals) {
@@ -109,84 +100,60 @@ def call(Map params = [:]) {
 
               stage("Build (${stageIdentifier})") {
                 String command
-                if (isMaven) {
-                  m2repo = "${pwd tmp: true}/m2repo"
-                  List<String> mavenOptions = [
-                    '--update-snapshots',
-                    // "-Dmaven.repo.local=$m2repo", // Use agent user maven cache
-                    '-Dmaven.test.failure.ignore',
-                    '-Dspotbugs.failOnError=false',
-                    '-Dcheckstyle.failOnViolation=false',
-                    '-Dcheckstyle.failsOnError=false',
-                  ]
-                  // jacoco had file locking issues on Windows, so only running on linux
-                  if (isUnix()) {
-                    mavenOptions += '-Penable-jacoco'
+                m2repo = "${pwd tmp: true}/m2repo"
+                List<String> mavenOptions = [
+                  '--update-snapshots',
+                  // "-Dmaven.repo.local=$m2repo", // Use agent user maven cache
+                  '-Dmaven.test.failure.ignore',
+                  '-Dspotbugs.failOnError=false',
+                  '-Dcheckstyle.failOnViolation=false',
+                  '-Dcheckstyle.failsOnError=false',
+                ]
+                // jacoco had file locking issues on Windows, so only running on linux
+                if (isUnix()) {
+                  mavenOptions += '-Penable-jacoco'
+                }
+                if (incrementals) {
+                  // set changelist and activate produce-incrementals profile
+                  mavenOptions += '-Dset.changelist'
+                  if (doArchiveArtifacts) {
+                    // ask Maven for the value of -rc999.abc123def456
+                    changelistF = "${pwd tmp: true}/changelist"
+                    mavenOptions += "help:evaluate -Dexpression=changelist -Doutput=$changelistF"
                   }
-                  if (incrementals) {
-                    // set changelist and activate produce-incrementals profile
-                    mavenOptions += '-Dset.changelist'
-                    if (doArchiveArtifacts) {
-                      // ask Maven for the value of -rc999.abc123def456
-                      changelistF = "${pwd tmp: true}/changelist"
-                      mavenOptions += "help:evaluate -Dexpression=changelist -Doutput=$changelistF"
-                    }
-                  }
-                  if (jenkinsVersion) {
-                    mavenOptions += "-Djenkins.version=${jenkinsVersion} -Daccess-modifier-checker.failOnError=false"
-                  }
-                  if (skipTests) {
-                    mavenOptions += '-DskipTests'
-                  }
-                  mavenOptions += 'clean install'
-                  def pit = params?.pit as Map ?: [:]
-                  def runWithPit = pit.containsKey('skip') && !pit['skip'] // use same convention as in tests.skip
-                  if (runWithPit && first) {
-                    mavenOptions += '-Ppit'
-                  }
-                  try {
-                    infra.runMaven(mavenOptions, jdk, null, addToolEnv, useArtifactCachingProxy)
-                  } finally {
-                    if (!skipTests) {
-                      junit('**/target/surefire-reports/**/*.xml,**/target/failsafe-reports/**/*.xml,**/target/invoker-reports/**/*.xml')
-                      if (first) {
-                        discoverReferenceBuild()
-                        // Default configuration for JaCoCo can be overwritten using a `jacoco` parameter (map).
-                        // Configuration see: https://www.jenkins.io/doc/pipeline/steps/code-coverage-api/#recordcoverage-record-code-coverage-results
-                        Map jacocoArguments = [tools: [[parser: 'JACOCO', pattern: '**/jacoco/jacoco.xml']], sourceCodeRetention: 'MODIFIED']
-                        if (params?.jacoco) {
-                          jacocoArguments.putAll(params.jacoco as Map)
-                        }
-                        recordCoverage jacocoArguments
-                        if (pit) {
-                          Map pitArguments = [tools: [[parser: 'PIT', pattern: '**/pit-reports/mutations.xml']], id: 'pit', name: 'Mutation Coverage', sourceCodeRetention: 'MODIFIED']
-                          pitArguments.putAll(pit)
-                          pitArguments.remove('skip')
-                          recordCoverage(pitArguments)
-                        }
+                }
+                if (jenkinsVersion) {
+                  mavenOptions += "-Djenkins.version=${jenkinsVersion} -Daccess-modifier-checker.failOnError=false"
+                }
+                if (skipTests) {
+                  mavenOptions += '-DskipTests'
+                }
+                mavenOptions += 'clean install'
+                def pit = params?.pit as Map ?: [:]
+                def runWithPit = pit.containsKey('skip') && !pit['skip'] // use same convention as in tests.skip
+                if (runWithPit && first) {
+                  mavenOptions += '-Ppit'
+                }
+                try {
+                  infra.runMaven(mavenOptions, jdk, null, addToolEnv, useArtifactCachingProxy)
+                } finally {
+                  if (!skipTests) {
+                    junit('**/target/surefire-reports/**/*.xml,**/target/failsafe-reports/**/*.xml,**/target/invoker-reports/**/*.xml')
+                    if (first) {
+                      discoverReferenceBuild()
+                      // Default configuration for JaCoCo can be overwritten using a `jacoco` parameter (map).
+                      // Configuration see: https://www.jenkins.io/doc/pipeline/steps/code-coverage-api/#recordcoverage-record-code-coverage-results
+                      Map jacocoArguments = [tools: [[parser: 'JACOCO', pattern: '**/jacoco/jacoco.xml']], sourceCodeRetention: 'MODIFIED']
+                      if (params?.jacoco) {
+                        jacocoArguments.putAll(params.jacoco as Map)
                       }
-                    }
-                  }
-                } else {
-                  infra.publishDeprecationCheck('Replace buildPlugin with buildPluginWithGradle', 'Gradle mode for buildPlugin() is deprecated, please use buildPluginWithGradle()')
-                  List<String> gradleOptions = [
-                    '--no-daemon',
-                    'cleanTest',
-                    'build',
-                  ]
-                  if (skipTests) {
-                    gradleOptions += '--exclude-task test'
-                  }
-                  command = "gradlew ${gradleOptions.join(' ')}"
-                  if (isUnix()) {
-                    command = './' + command
-                  }
-
-                  try {
-                    infra.runWithJava(command, jdk, null, addToolEnv)
-                  } finally {
-                    if (!skipTests) {
-                      junit('**/build/test-results/**/*.xml')
+                      recordCoverage jacocoArguments
+                      if (pit) {
+                        Map pitArguments = [tools: [[parser: 'PIT', pattern: '**/pit-reports/mutations.xml']], id: 'pit', name: 'Mutation Coverage', sourceCodeRetention: 'MODIFIED']
+                        pitArguments.putAll(pit)
+                        pitArguments.remove('skip')
+                        recordCoverage(pitArguments)
+                      }
                     }
                   }
                 }
@@ -277,14 +244,15 @@ def call(Map params = [:]) {
                    * the result can be consumed by a Launchable build in the future. We do not
                    * attempt to record commits for non-incrementalified plugins because such
                    * plugins' PR builds could not be consumed by anything else anyway, and all
-                   * plugins currently in the BOM are incrementalified. We do not attempt to record
-                   * commits on Windows because our Windows agents do not have Python installed.
+                   * plugins currently in the BOM are incrementalified.
                    */
-                  if (incrementals && platform != 'windows' && currentBuild.currentResult == 'SUCCESS' && false) { // No launchable upload from markwaite.net
-                    launchable.install()
+                  if (incrementals && currentBuild.currentResult == 'SUCCESS' && useContainerAgent) {
                     withCredentials([string(credentialsId: 'launchable-jenkins-bom', variable: 'LAUNCHABLE_TOKEN')]) {
-                      launchable('verify')
-                      launchable('record commit')
+                      if (isUnix()) {
+                        sh 'launchable verify && launchable record commit'
+                      } else {
+                        bat 'launchable verify && launchable record commit'
+                      }
                     }
                   }
                 } else {
@@ -301,13 +269,7 @@ def call(Map params = [:]) {
                     }
                     publishingIncrementals = true
                   } else {
-                    String artifacts
-                    if (isMaven) {
-                      artifacts = '**/target/*.hpi,**/target/*.jpi,**/target/*.jar'
-                    } else {
-                      artifacts = '**/build/libs/*.hpi,**/build/libs/*.jpi'
-                    }
-                    archiveArtifacts artifacts: artifacts, fingerprint: true
+                    archiveArtifacts artifacts: '**/target/*.hpi,**/target/*.jpi,**/target/*.jar', fingerprint: true
                   }
                 }
               }
@@ -382,11 +344,4 @@ List<Map<String, String>> getConfigurations(Map params) {
     }
   }
   return ret
-}
-
-/**
- * @deprecated no longer recommended
- */
-static List<Map<String, String>> recommendedConfigurations() {
-  null
 }
