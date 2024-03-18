@@ -9,7 +9,7 @@ def call(userConfig = [:]) {
     stagingCredentials: [], // No custom secrets for staging by default
     productionCredentials: [], // No custom secrets for production by default
     productionBranch: 'main', // Defaults to the principal branch
-    agentContainerImage: 'jenkinsciinfra/hashicorp-tools:1.0.62', // Version managed by updatecli
+    agentLabel: 'jnlp-linux-arm64', // replace agentContainerImage
     runTests: false, // Executes the tests provided by the "calling" project, which should provide a tests/Makefile
     runCommonTests: true, // Executes the default test suite from the shared tools repository (terratest)
   ]
@@ -50,7 +50,7 @@ def call(userConfig = [:]) {
     if (!isBuildCauseUser) {
       parallelStages['staging'] = {
         stage('Staging') {
-          agentTemplate(finalConfig.agentContainerImage, {
+          agentTemplate(finalConfig.agentLabel, {
             withCredentials(finalConfig.stagingCredentials) {
               stage('🔎 Validate Terraform for Staging Environment') {
                 getInfraSharedTools(sharedToolsSubDir)
@@ -58,8 +58,12 @@ def call(userConfig = [:]) {
                 sh makeCliCmd + ' validate'
               }
               if (finalConfig.runCommonTests) {
-                stage('✅ Commons Test Terraform Project') {
-                  sh makeCliCmd + ' common-tests'
+                final String commonTestsFileName = 'common-tests.log'
+                withEnv(["COMMON_TESTS_FILE_NAME=${commonTestsFileName}",]) {
+                  stage('✅ Commons Test Terraform Project') {
+                    sh makeCliCmd + ' common-tests'
+                    archiveArtifacts commonTestsFileName
+                  }
                 }
               }
               if (finalConfig.runTests) {
@@ -75,20 +79,20 @@ def call(userConfig = [:]) {
 
     parallelStages['production'] = {
       stage('Production') {
-        agentTemplate(finalConfig.agentContainerImage, {
+        agentTemplate(finalConfig.agentLabel, {
           withCredentials(defaultConfig.productionCredentials) {
             final String planFileName = 'terraform-plan-for-humans.txt'
             def scmOutput
             stage('🦅 Generate Terraform Plan') {
               // When the job is triggered by the daily cron timer, then the plan succeed only if there is no changes found (e.g. no config drift)
               // For all other triggers, the plan succeed either there are changes or not
-              String tfCliArsPlan = ''
+              String tfCliArgsPlan = ''
               if (isBuildCauseTimer) {
-                tfCliArsPlan = '-detailed-exitcode'
+                tfCliArgsPlan = '-detailed-exitcode'
               }
               withEnv([
                 // https://www.terraform.io/docs/cli/config/environment-variables.html#tf_cli_args-and-tf_cli_args_name
-                "TF_CLI_ARGS_plan=${tfCliArsPlan}",
+                "TF_CLI_ARGS_plan=${tfCliArgsPlan}",
                 "PLAN_FILE_NAME=${planFileName}",
               ]) {
                 scmOutput = getInfraSharedTools(sharedToolsSubDir)
@@ -125,7 +129,16 @@ def call(userConfig = [:]) {
                   sh makeCliCmd + ' deploy'
                 } catch(Exception e) {
                   // If the deploy failed, keep the pod until a user catch the problem (cloud be an errored state, or many reason to keep the workspace)
-                  input message: 'An error happened while applying the terraform plan. Keeping the agent up and running. Delete the agent?'
+                  final String msg = 'An error happened while applying the terraform plan. Keeping the agent up and running. Delete the agent?'
+                  try {
+                    publishChecks name: 'deploy-error',
+                    title: 'An error happened while applying the terraform plan',
+                    summary: msg,
+                    detailsURL: "${env.BUILD_URL}/console"
+                  } finally {
+                    currentBuild.result = 'FAILURE'
+                    input message: msg
+                  }
                 }
               }
             }
@@ -139,44 +152,14 @@ def call(userConfig = [:]) {
   }
 }
 
-def agentTemplate(containerImage, body) {
-  podTemplate(
-      // Custom YAML definition to enforce no service account token (if Terraform uses kubernetes, it would grant it a wrong access)
-      yaml: '''
-      apiVersion: v1
-      kind: Pod
-      spec:
-        automountServiceAccountToken: false
-        nodeSelector:
-          kubernetes.azure.com/agentpool: infracipool
-          kubernetes.io/os: linux
-        tolerations:
-        - key: "jenkins"
-          operator: "Equal"
-          value: "infra.ci.jenkins.io"
-          effect: "NoSchedule"
-        - key: "kubernetes.azure.com/scalesetpriority"
-          operator: "Equal"
-          value: "spot"
-          effect: "NoSchedule"
-      resources:
-        limits:
-          cpu: 2
-          memory: 2Gi
-        requests:
-          cpu: 2
-          memory: 2Gi
-      ''',
-      // The Docker image here is aimed at "1 container per pod" and is embedding Jenkins agent tooling
-      containers: [containerTemplate(name: 'jnlp', image: containerImage)]) {
-        node(POD_LABEL) {
-          timeout(time: 1, unit: 'HOURS') {
-            ansiColor('xterm') {
-              body.call()
-            }
-          }
-        }
+def agentTemplate(agentLabel, body) {
+  node (agentLabel) {
+    timeout(time: 1, unit: 'HOURS') {
+      ansiColor('xterm') {
+        body.call()
       }
+    }
+  }
 }
 
 
