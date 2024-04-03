@@ -10,10 +10,9 @@ Records a deployment to github
   * String **description** (Optional, defaults to "Deploy to preview environment") String description of deployment
   * String **credentialsId** (Optional, defaults to "github-app-infra") String contains which credential to use
 
-
 Example Usages
 
-<pre><code>
+```
 post {
   success {
     recordDeployment('jenkins-infra', 'jenkins.io', pullRequest.head, 'success', "https://deploy-preview-${CHANGE_ID}--jenkins-io-site-pr.netlify.app")
@@ -22,4 +21,4 @@ post {
     recordDeployment('jenkins-infra', 'jenkins.io', pullRequest.head, 'failure', "https://deploy-preview-${CHANGE_ID}--jenkins-io-site-pr.netlify.app")
   }
 }
-</code></pre>
+```

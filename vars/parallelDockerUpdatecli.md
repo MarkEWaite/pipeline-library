@@ -14,10 +14,10 @@ The following arguments are available for this function:
 - String **mainBranch**: (Optional - Default: "main") name of the main branch of the repository
 
 Examples:
-<code>
+```
 // build and publish the docker image, and in parallel run "updatecli diff" command and also "updatecli apply" if the pipeline is on the main branch.
 parallelDockerUpdatecli([imageName: 'myDockerImage'])
 
 // build and publish the docker image only if there is a code change, and in parallel run "updatecli diff" command and also "updatecli apply" if the pipeline is on the main branch.
 parallelDockerUpdatecli([imageName: 'myDockerImage', rebuildImageOnPeriodicJob: false])
-</code>
+```
