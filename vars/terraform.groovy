@@ -12,6 +12,7 @@ def call(userConfig = [:]) {
     agentLabel: 'jnlp-linux-arm64', // replace agentContainerImage
     runTests: false, // Executes the tests provided by the "calling" project, which should provide a tests/Makefile
     runCommonTests: true, // Executes the default test suite from the shared tools repository (terratest)
+    publishReports: [],
   ]
 
   // Merging the 2 maps - https://blog.mrhaki.com/2010/04/groovy-goodness-adding-maps-to-map_21.html
@@ -97,6 +98,15 @@ def call(userConfig = [:]) {
               ]) {
                 scmOutput = getInfraSharedTools(sharedToolsSubDir)
 
+                // Retrieve published reports for idempotency (otherwise Terraform's "local_file" will be marked as always re-created as ignored from the SCM)
+                // Note: always run after call to getInfraSharedTools() (or it will be overridden)
+                if (finalConfig.publishReports && finalConfig.publishReports.size > 0) {
+                  for (int i = 0; i < finalConfig.publishReports.size; i++) {
+                    final String relativeFilePath = finalConfig.publishReports[i]
+                    fileText = new URL ("https://reports.jenkins.io/${relativeFilePath}").getText()
+                    writeFile(file: relativeFilePath, text: fileText)
+                  }
+                }
                 try {
                   sh makeCliCmd + ' plan'
                 }
@@ -134,11 +144,15 @@ def call(userConfig = [:]) {
                     publishChecks name: 'deploy-error',
                     title: 'An error happened while applying the terraform plan',
                     summary: msg,
-                    detailsURL: "${env.BUILD_URL}/console"
+                    detailsURL: "${env.BUILD_URL}/console",
+                    conclusion: 'FAILURE'
                   } finally {
                     currentBuild.result = 'FAILURE'
                     input message: msg
                   }
+                }
+                if (finalConfig.publishReports && finalConfig.publishReports.size > 0) {
+                  publishReports(finalConfig.publishReports)
                 }
               }
             }
@@ -161,7 +175,6 @@ def agentTemplate(agentLabel, body) {
     }
   }
 }
-
 
 // Retrieves the shared tooling
 def getInfraSharedTools(String sharedToolsSubDir) {

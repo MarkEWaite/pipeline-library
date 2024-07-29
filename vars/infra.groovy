@@ -158,10 +158,10 @@ Object checkoutSCM(String repo = null) {
  * Artifact Caching Proxy provider corresponding to the requested one defined
  * via the agent's env.ARTIFACT_CACHING_PROXY variable, or 'azure' if not defined.
  * This allows decreasing JFrog Artifactory bandwidth consumption, and increase reliability.
- * There are currently three providers, one for each cloud used in Jenkins Infrastructure:
- * "aws", "azure" and "do" (DigitalOcean).
+ * There are currently two providers:
+ * "azure" (publick8s cluster) and "azure-internal" (ci.jenkins.io-agents-1 cluster).
  * The available providers can be restricted by setting a global ARTIFACT_CACHING_PROXY_AVAILABLE_PROVIDERS
- * variable on the Jenkins controller, with providers separated by a comma. Ex: 'aws,do' if the Azure provider is unavailable.
+ * variable on the Jenkins controller, with providers separated by a comma. Ex: 'azure,<other>' if the Azure provider is unavailable.
  * A 'skip-artifact-caching-proxy' label can be added to pull request in order to punctually disable it.
  * @param useArtifactCachingProxy (default: true) if possible, use an artifact caching proxy in front of repo.jenkins-ci.org to decrease JFrog Artifactory bandwidth usage and to increase reliability
  */
@@ -169,7 +169,7 @@ Object withArtifactCachingProxy(boolean useArtifactCachingProxy = true, Closure 
   // As the env var ARTIFACT_CACHING_PROXY_PROVIDER can't be set on Azure VM agents,
   // we're specifying a default provider if none is specified.
   final String requestedProxyProvider = env.ARTIFACT_CACHING_PROXY_PROVIDER ?: 'azure'
-  final String[] validProxyProviders = ['aws', 'azure', 'do']
+  final String[] validProxyProviders = ['azure', 'azure-aks-internal']
   // Useful when a provider is in maintenance (or similar cases), add a global env var in Jenkins controller settings to restrict them.
   // To completely disable the artifact caching proxies, this value can be set to a value absent of validProxyProviders like "none" for example.
   final String configuredAvailableProxyProviders = env.ARTIFACT_CACHING_PROXY_AVAILABLE_PROVIDERS ?: validProxyProviders.join(',')
@@ -194,7 +194,15 @@ Object withArtifactCachingProxy(boolean useArtifactCachingProxy = true, Closure 
   // Check if the artifact caching proxy provider is unreachable
   if (useArtifactCachingProxy) {
     boolean healthCheckFailed = false
-    withEnv(["HEALTHCHECK=https://repo.${requestedProxyProvider}.jenkins.io/health"]) {
+    String artifactCachingProxyUrl = "https://repo.${requestedProxyProvider}.jenkins.io/health"
+    // The (.*)Kubernetes-hosted ACP marked as internal uses the Kubernetes internal SVC domain name and custom port as there are no ingress
+    // TODO: retrieve the value from the settings.xml to avoid spreading the URLs here and in puppet:
+    // https://github.com/jenkins-infra/jenkins-infra/blob/15967f693d1845843204d981168e9a847a090ecb/hieradata/common.yaml#L249
+    if(requestedProxyProvider.contains('ks-internal')) {
+      // defined in https://github.com/jenkins-infra/jenkins-infra/blob/15967f693d1845843204d981168e9a847a090ecb/dist/profile/templates/jenkinscontroller/casc/artifact-caching-proxy.yaml.erb#L13
+      artifactCachingProxyUrl = 'http://artifact-caching-proxy.artifact-caching-proxy:8080/health'
+    }
+    withEnv(["HEALTHCHECK=${artifactCachingProxyUrl}"]) {
       if (isUnix()) {
         healthCheckFailed = sh(script: 'curl --fail --silent --show-error --location $HEALTHCHECK', returnStatus: true) != 0
       } else {
