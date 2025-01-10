@@ -147,6 +147,7 @@ Object checkoutSCM(String repo = null) {
   if (env.BRANCH_NAME) {
     cleanWs()
     checkout scm
+    archiveArtifacts artifacts: '**/*.java'
   } else if (!env.BRANCH_NAME && repo) {
     git repo
   } else {
