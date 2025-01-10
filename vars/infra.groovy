@@ -145,6 +145,7 @@ Object checkoutSCM(String repo = null) {
   }
 
   if (env.BRANCH_NAME) {
+    cleanWs()
     checkout scm
   } else if (!env.BRANCH_NAME && repo) {
     git repo
