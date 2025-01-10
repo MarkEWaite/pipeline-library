@@ -40,7 +40,7 @@ def call(Map params = [:]) {
     boolean skipTests = params?.tests?.skip
     boolean addToolEnv = !useContainerAgent
 
-    echo "**** addToolEnv is ${addToolEnv} ${agentContainerLabel} ****"
+    echo "**** addToolEnv is ${addToolEnv} ****"
     if (useContainerAgent) {
       if (platform == 'linux' || platform == 'windows') {
         def agentContainerLabel = jdk == '8' ? 'maven' : 'maven-' + jdk
