@@ -142,7 +142,7 @@ Object checkoutSCM(String repo = null) {
   // Enable long paths to avoid problems with tests on Windows agents
   if (!isUnix()) {
     bat 'git config --global core.longpaths true'
-    bat 'git config --global core.eol lf'
+    bat 'git config --global core.eol lf && git config --global --get core.eol'
   }
 
   if (env.BRANCH_NAME) {
