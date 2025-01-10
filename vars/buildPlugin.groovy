@@ -14,9 +14,9 @@ def call(Map params = [:]) {
   def gitDefaultBranch = params.containsKey('gitDefaultBranch') ? params.gitDefaultBranch : null
   def useArtifactCachingProxy = params.containsKey('useArtifactCachingProxy') ? params.useArtifactCachingProxy : true
 
-  def useContainerAgent = params.containsKey('useContainerAgent') ? params.useContainerAgent : false
-  // TODO: Remove when https://github.com/jenkins-infra/helpdesk/issues/4490 is resolved
-  useContainerAgent = false
+  // TODO: Restore when https://github.com/jenkins-infra/helpdesk/issues/4490 is resolved
+  // def useContainerAgent = params.containsKey('useContainerAgent') ? params.useContainerAgent : false
+  def useContainerAgent = false
   def forkCount = params.containsKey('forkCount') ? params.forkCount : null
   if (forkCount) {
     echo "Running parallel tests with forkCount=${forkCount}"
