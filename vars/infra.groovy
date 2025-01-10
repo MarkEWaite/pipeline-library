@@ -147,7 +147,10 @@ Object checkoutSCM(String repo = null) {
   if (env.BRANCH_NAME) {
     cleanWs()
     checkout scm
-    archiveArtifacts artifacts: '**/*.html'
+    if (!isUnix()) {
+      // Archive HTML files from Windows
+      archiveArtifacts artifacts: '**/*.html'
+    }
   } else if (!env.BRANCH_NAME && repo) {
     git repo
   } else {
