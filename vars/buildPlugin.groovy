@@ -48,6 +48,7 @@ def call(Map params = [:]) {
           // TODO: Remove when https://github.com/jenkins-infra/helpdesk/issues/4490 is resolved
           agentContainerLabel = 'docker-windows'
           addToolEnv = true
+          echo "**** addToolEnv is ${addToolEnv} and agentContainerLabel is #{agentContainerLabel} ****"
         }
         label = agentContainerLabel
       }
