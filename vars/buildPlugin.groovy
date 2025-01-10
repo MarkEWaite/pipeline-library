@@ -15,6 +15,8 @@ def call(Map params = [:]) {
   def useArtifactCachingProxy = params.containsKey('useArtifactCachingProxy') ? params.useArtifactCachingProxy : true
 
   def useContainerAgent = params.containsKey('useContainerAgent') ? params.useContainerAgent : false
+  // TODO: Restore when https://github.com/jenkins-infra/helpdesk/issues/4490 is resolved
+  // def useContainerAgent = false
   def forkCount = params.containsKey('forkCount') ? params.forkCount : null
   if (forkCount) {
     echo "Running parallel tests with forkCount=${forkCount}"
@@ -36,13 +38,18 @@ def call(Map params = [:]) {
     String stageIdentifier = "${platform}-${jdk}${jenkinsVersion ? '-' + jenkinsVersion : ''}"
     boolean first = tasks.size() == 1
     boolean skipTests = params?.tests?.skip
-    boolean addToolEnv = true // !useContainerAgent in upstream - always define tool env in mwaite cluster
+    boolean addToolEnv = !useContainerAgent
 
+    echo "**** addToolEnv is ${addToolEnv} ${agentContainerLabel} ****"
     if (useContainerAgent) {
       if (platform == 'linux' || platform == 'windows') {
         def agentContainerLabel = jdk == '8' ? 'maven' : 'maven-' + jdk
         if (platform == 'windows') {
           agentContainerLabel += '-windows'
+          // TODO: Remove when https://github.com/jenkins-infra/helpdesk/issues/4490 is resolved
+          agentContainerLabel = 'docker-windows'
+          addToolEnv = true
+          echo "**** addToolEnv is ${addToolEnv} and agentContainerLabel is ${agentContainerLabel} ****"
         }
         label = agentContainerLabel
       }
