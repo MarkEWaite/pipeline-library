@@ -40,6 +40,7 @@ def call(Map params = [:]) {
     boolean skipTests = params?.tests?.skip
     boolean addToolEnv = !useContainerAgent
 
+    echo "**** addToolEnv is ${addToolEnv} ${agentContainerLabel} ****"
     if (useContainerAgent) {
       if (platform == 'linux' || platform == 'windows') {
         def agentContainerLabel = jdk == '8' ? 'maven' : 'maven-' + jdk
@@ -48,7 +49,7 @@ def call(Map params = [:]) {
           // TODO: Remove when https://github.com/jenkins-infra/helpdesk/issues/4490 is resolved
           agentContainerLabel = 'docker-windows'
           addToolEnv = true
-          echo "**** addToolEnv is ${addToolEnv} and agentContainerLabel is #{agentContainerLabel} ****"
+          echo "**** addToolEnv is ${addToolEnv} and agentContainerLabel is ${agentContainerLabel} ****"
         }
         label = agentContainerLabel
       }
