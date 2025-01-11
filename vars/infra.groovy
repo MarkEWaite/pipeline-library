@@ -141,7 +141,11 @@ Object withFileShareServicePrincipal(Map options, Closure body) {
 Object checkoutSCM(String repo = null) {
   // Enable long paths to avoid problems with tests on Windows agents
   if (!isUnix()) {
-    bat 'git config --global core.eol lf && git config --global core.longpaths true && git config --global --list'
+    bat '''
+        git config --global core.autocrlf true
+        git config --global core.longpaths true
+        git config --global --list
+        '''
   }
 
   if (env.BRANCH_NAME) {
