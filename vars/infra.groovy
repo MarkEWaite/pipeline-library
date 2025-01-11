@@ -141,7 +141,7 @@ Object withFileShareServicePrincipal(Map options, Closure body) {
 Object checkoutSCM(String repo = null) {
   // Enable long paths to avoid problems with tests on Windows agents
   if (!isUnix()) {
-    bat 'git config --global core.eol native && git config --global core.autocrlf input && git config --global --list'
+    bat 'git config --unset core.eol && git config --global core.autocrlf true && git config --global --list'
   }
 
   if (env.BRANCH_NAME) {
