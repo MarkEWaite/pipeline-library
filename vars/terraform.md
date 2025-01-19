@@ -1,1 +1,0 @@
-The pipeline library "terraform()" is documented on the [following page](https://github.com/jenkins-infra/shared-tools/tree/main/terraform#jenkins-pipeline).

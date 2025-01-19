@@ -1,0 +1,134 @@
+<strong>infra.isRunningOnJenkinsInfra()</strong>
+
+<p>
+    Return true if this Pipeline is executing on Jenkins infrastructure.
+    It may be <code>ci.jenkins.io</code>, a trusted CI environment, or an infrastructure CI environment.
+</p>
+
+<strong>infra.isTrusted()</strong>
+
+<p>
+    Return true if this Pipeline is executing on a trusted CI environment.
+</p>
+
+<strong>infra.isRelease()</strong>
+
+<p>
+    Return true if this Pipeline is executing on the Jenkins release CI environment.
+</p>
+
+<strong>infra.isInfra()</strong>
+
+<p>
+    Return true if this Pipeline is executing on an infrastructure CI environment.
+</p>
+
+<strong>infra.withDockerCredentials(Closure body)</strong>
+
+<p>
+    Run the specified Closure with Docker credentials.
+    Note that the credentials are available only on a trusted CI environment; execution will fail on other CI instances.
+</p>
+
+<strong>infra.checkoutSCM(String repo = null)</strong>
+
+<p>
+    Check out a repository.
+    Either this must be used as part of a Multibranch Pipeline or a repository argument must be provided.
+</p>
+
+<strong>infra.withArtifactCachingProxy(boolean useArtifactCachingProxy = true, Closure body)</strong>
+
+<p>
+    Execute the body passed as closure with a Maven settings file using the
+     Artifact Caching Proxy server defined in agent's env.ARTIFACT_CACHING_PROXY_SERVERID variable.
+     It allows decreasing JFrog Artifactory bandwidth consumption and increase reliability.
+     A 'skip-artifact-caching-proxy' label can be added to pull request in order to punctually disable it.
+     @param useArtifactCachingProxy (default: true) if possible, use an artifact caching proxy in front of repo.jenkins-ci.org to decrease JFrog Artifactory bandwidth usage and to increase reliability
+</p>
+
+<p>
+    See the method Javadoc in the repository for more information.
+</p>
+
+<strong>infra.runMaven(List&lt;String&gt; options, String jdk = '8', List&lt;String&gt; extraEnv = null, Boolean addToolEnv = true, Boolean useArtifactCachingProxy = true)</strong>
+
+<p>
+    Run Maven with the specified options in the current workspace.
+    If <code>useArtifactCachingProxy</code> is <code>true</code>, Maven settings will be added using <code>infra.withArtifactCachingProxy()</code> if possible (i.e. the server is available, reachable and not skipped).
+</p>
+
+<p>
+    See the method Javadoc in the repository for more information.
+</p>
+
+<strong>infra.runMaven(List&lt;String&gt; options, Integer jdk, List&lt;String&gt; extraEnv = null, Boolean addToolEnv = true, Boolean useArtifactCachingProxy = true)</strong>
+
+<p>
+    Run Maven with the specified options in the current workspace.
+    If <code>useArtifactCachingProxy</code> is <code>true</code>, Maven settings will be added using <code>infra.withArtifactCachingProxy()</code> if possible (i.e. the server is available, reachable and not skipped).
+</p>
+
+<p>
+    See the method Javadoc in the repository for more information.
+</p>
+
+<strong>runWithMaven(String command, String jdk = '8', List&lt;String&gt; extraEnv = null, Boolean addToolEnv = true)</strong>
+
+<p>
+     Run the specified command with custom Java and Maven environments.
+     The command may be either Batch or Shell depending on the OS.
+</p>
+
+<p>
+    See the method Javadoc in the repository for more information.
+</p>
+
+<strong>runWithJava(String command, String jdk = '8', List&lt;String&gt; extraEnv = null, Boolean addToolEnv = true)</strong>
+
+<p>
+     Run the specified command with the Java tool.
+     <code>PATH</code> and <code>JAVA_HOME</code> will be set.
+     The command may be either Batch or Shell depending on the OS.
+</p>
+
+<p>
+    See the method Javadoc in the repository for more information.
+</p>
+
+<strong>infra.ensureInNode(nodeLabels, body)</strong>
+
+<p>
+    Run a code block in a node with the all the specified nodeLabels as labels.
+    If already running in that node, simply execute the code block.
+    Otherwise, allocate the desired node and run the code inside it.
+    Node labels must be specified as a <code>String</code> consisting of a comma-separated list of labels.
+    <strong>Note:</strong> This step is not able to manage complex labels and checks for them literally, so do not try to use labels like <code>docker,(lowmemory&amp;&amp;linux)</code>.
+    This will result in the step launching a new node, as it will be unable to find the label <code>(lowmemory&amp;&amp;linux)</code> in the list of labels for the current node.
+</p>
+
+<strong>infra.prepareToPublishIncrementals()</strong>
+
+<p>
+    Record artifacts created by this build which could be published via Incrementals (JEP-305).
+    Call at most once per build, on a Linux node, after running <code>mvn -Dset.changelist install</code>.
+    Follow up with <code>infra.maybePublishIncrementals()</code>.
+</p>
+
+<strong>infra.maybePublishIncrementals()</strong>
+
+<p>
+    When appropriate, publish artifacts from the current build to the Incrementals repository.
+    Call at the end of the build, outside any node, when <code>infra.prepareToPublishIncrementals()</code> may have been called previously.
+    See <a href="https://issues.jenkins.io/browse/INFRA-1571">INFRA-1571</a> and <a href="https://www.jenkins.io/jep/305">JEP-305</a>.
+</p>
+
+<strong>infra.publishDeprecationCheck(String deprecationSummary, String deprecationMessage)</strong>
+
+<p>
+    Log a warning to the build console and publish a deprecation check via the Checks API.
+</p>
+
+<!--
+vim: ft=html
+-->

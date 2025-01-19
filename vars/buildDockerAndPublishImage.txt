@@ -1,6 +1,6 @@
 Lints, builds, tests and eventually deploys a Docker image.
 
-Please refer to the [related documentation](https://github.com/jenkins-infra/pipeline-library/blob/master/resources/io/jenkins/infra/docker/README.adoc) for more details.
+Please reference to <a href="https://github.com/jenkins-infra/pipeline-library/blob/master/resources/io/jenkins/infra/docker/README.adoc">related documentation</a> for more details.
 
 The following arguments are available for this function:
 
@@ -14,9 +14,9 @@ The following arguments are available for this function:
   * String **targetplatforms**: (Optional, defaults to "linux/amd64") Define the (comma separated) list of Docker supported platforms to build the image for. Defaults to `linux/amd64` when unspecified. Incompatible with the legacy `platform` attribute.
   * String **nextVersionCommand** (Optional, defaults to "jx-release-version") If "automaticSemanticVersioning" is set, this is the command to retrieve the next version (to use for tagging and releasing)
   * String **gitCredentials**: (Optional, defaults to "") If "automaticSemanticVersioning" is set, name of the credential to use when tagging the git repository. Support user/password or GitHub App credential types.
-  * String **imageDir**: (Optional, defaults to ".", the parent directory of the Dockerfile) Path to a directory to use as build context (Example: "docker/", "python/2.7") ref: [build description](https://docs.docker.com/engine/reference/commandline/build/#description).
+  * String **imageDir**: (Optional, defaults to ".", the parent directory of the Dockerfile) Path to a directory to use as build context (Example: "docker/", "python/2.7") ref: https://docs.docker.com/engine/reference/commandline/build/#description.
   * String **registry**: (Optional, defaults to "" which defines the registry based on the current controller setup) Container registry to deploy this image to (Example: "ghcr.io", "python/2.7").
-  * String **unstash**: (Optional, default to "") Allow to restore files from a previously saved stash if not empty, should contain the name of the last stashed as per [unstash files](https://www.jenkins.io/doc/pipeline/steps/workflow-basic-steps/#unstash-restore-files-previously-stashed).
+  * String **unstash**: (Optional, default to "") Allow to restore files from a previously saved stash if not empty, should contain the name of the last stashed as per https://www.jenkins.io/doc/pipeline/steps/workflow-basic-steps/#unstash-restore-files-previously-stashed.
   * String **dockerBakeFile**: (Optionan, default to "") Specify the path to a custom Docker Bake file to use instead of the default one
   * String **dockerBakeTarget**: (Optional, default to "default") Specify the target of a custom Docker Bake file to work with
   * Boolean **disablePublication**: (Optional, default to false) Allow to disable tagging and publication of container image and GitHub release
@@ -31,7 +31,7 @@ The build phase adds build arguments you can use in your Dockerfile:
 
 The test phase is only executed if a file `common-cst.yml` or `<imageDir>/cst.yml` is found at the root of the repository with the "TAR" driver for security concerns.
 If the build concerns a Windows image, a prefix `-windows` is expected (`common-cst-windows.yml` or `<imageDir>/cst-windows.yml`)
-Please refer to [container structure test](https://github.com/GoogleContainerTools/container-structure-test).
+Please reference to https://github.com/GoogleContainerTools/container-structure-test.
 
 Publication of the Docker image only happens when the build is triggered by:
 
@@ -41,12 +41,12 @@ Publication of the Docker image only happens when the build is triggered by:
 
 Example Usages
 
-```
+<pre><code>
 buildDockerAndPublishImage('terraform')
-```
+</code></pre>
 
 Build of two images in parallel
-```
+<pre><code>
 parallel(
   failFast: true,
   'maven-jdk8': {
@@ -67,11 +67,11 @@ parallel(
     ])
   },
 )
-```
+</code></pre>
 
 Build of three linux images in parallel (imply docker bake inside)
-```
+<pre><code>
 buildDockerAndPublishImage('wiki',[
   targetplatforms: 'linux/amd64,linux/arm64,linux/s390x'
 ]),
-```
+</code></pre>
