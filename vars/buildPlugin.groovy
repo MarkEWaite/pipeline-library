@@ -36,7 +36,7 @@ def call(Map params = [:]) {
     String stageIdentifier = "${platform}-${jdk}${jenkinsVersion ? '-' + jenkinsVersion : ''}"
     boolean first = tasks.size() == 1
     boolean skipTests = params?.tests?.skip
-    boolean addToolEnv = !useContainerAgent
+    boolean addToolEnv = !useContainerAgent || true // Always add tool env on markwaite.net
 
     if (useContainerAgent) {
       if (platform == 'linux' || platform == 'windows') {
