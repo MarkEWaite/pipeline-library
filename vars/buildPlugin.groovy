@@ -59,6 +59,10 @@ def call(Map params = [:]) {
           label = platform
       }
     }
+    if (scm.userRemoteConfigs[0].url.contains('gitea-server.markwaite.net')) {
+      // Cloud agents cannot access gitea-server.markwaite.net
+      label += ' && !cloud'
+    }
 
     tasks[stageIdentifier] = {
       retry(count: 3, conditions: [nonresumable()]) {
