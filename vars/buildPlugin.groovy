@@ -59,6 +59,10 @@ def call(Map params = [:]) {
           label = platform
       }
     }
+    if (repo.contains('gitea-server.markwaite.net')) {
+      // gitea-server.markwaite.net is not visible from cloud agents
+      label += ' && !cloud'
+    }
 
     tasks[stageIdentifier] = {
       retry(count: 3, conditions: [nonresumable()]) {
