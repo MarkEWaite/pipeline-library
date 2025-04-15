@@ -48,7 +48,7 @@ def call(Map params = [:]) {
 
     tasks[stageIdentifier] = {
       int retryCounter = 0
-      retry(count: 3, conditions: [kubernetesAgent(handleNonKubernetes: true), nonresumable()]) {
+      retry(count: 3, conditions: [nonresumable()]) {
         if (useContainerAgent) {
           label = baselabel
         } else {
