@@ -299,21 +299,49 @@ Object loadMavenLocalCacheIfAny(String mvnLocalRepo, String cachePath = '/cache/
   if (isUnix()) {
     withEnv(["MVN_LOCAL_REPO=${mvnLocalRepo}", "MVN_CACHE_PATH=${cachePath}",]) {
       sh '''
-      test -n "${MVN_LOCAL_REPO}" || export MVN_LOCAL_REPO="$HOME/.m2/repository"
+      : "${MVN_CACHE_PATH:?MVN_CACHE_PATH must be set}"
+      export MVN_LOCAL_REPO="${MVN_LOCAL_REPO:-$HOME/.m2/repository}"
+
       mkdir -p "${MVN_LOCAL_REPO}"
-      if test -f "${MVN_CACHE_PATH}";
+
+      if test -f "${MVN_CACHE_PATH}"
       then
-        pushd "${MVN_LOCAL_REPO}"
-        cache_archive_name=../"$(basename "${MVN_CACHE_PATH}")"
+        # MVN_CACHE_PATH might be served from a CSI S3 volume which does not support seeking.
+        # tar requires a seekable source, so we copy the archive locally first.
+        # The copy lands in the parent of MVN_LOCAL_REPO which has sufficient disk space.
+        cache_archive_name="$(dirname "${MVN_LOCAL_REPO}")/$(basename "${MVN_CACHE_PATH}")"
         time cp "${MVN_CACHE_PATH}" "${cache_archive_name}"
-        time tar xzf "${cache_archive_name}" ./
+        time tar xzf "${cache_archive_name}" -C "${MVN_LOCAL_REPO}"
         rm -f "${cache_archive_name}"
-        popd
+      else
+        echo "${MVN_CACHE_PATH} archive not found: skipping maven cache retrieval."
       fi
       '''
     }
   } else {
-    echo "WARNING: Maven cache loading not implemented on Windows yet."
+    pwsh '''
+    if (-not $env:MVN_LOCAL_REPO) {
+      $env:MVN_LOCAL_REPO = Join-Path $HOME ".m2/repository"
+    }
+    New-Item -ItemType Directory -Force -Path $env:MVN_LOCAL_REPO | Out-Null
+
+    if ($env:MVN_CACHE_PATH -and (Test-Path -PathType Leaf $env:MVN_CACHE_PATH)) {
+      # MVN_CACHE_PATH might be served from a CSI S3 volume which does not support seeking.
+      # tar requires a seekable source, so we copy the archive locally first.
+      # The copy lands in the parent of MVN_LOCAL_REPO which has sufficient disk space.
+      $cacheArchiveName = Join-Path (Split-Path -Parent $env:MVN_LOCAL_REPO) (Split-Path -Leaf $env:MVN_CACHE_PATH)
+
+      $elapsed = (Measure-Command { Copy-Item $env:MVN_CACHE_PATH $cacheArchiveName }).TotalSeconds
+      Write-Host "cp: ${elapsed}s"
+
+      $elapsed = (Measure-Command { tar xzf $cacheArchiveName -C $env:MVN_LOCAL_REPO }).TotalSeconds
+      Write-Host "tar: ${elapsed}s"
+
+      Remove-Item -Force $cacheArchiveName
+    } else {
+      Write-Host "${env:MVN_CACHE_PATH} archive not found: skipping maven cache retrieval."
+    }
+    '''
   }
 }
 
