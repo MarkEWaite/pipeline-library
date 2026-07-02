@@ -421,7 +421,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     def script = loadScript(scriptName)
     withMocks {
       script.call(testImageName, [
-        agentLabels: 'docker-windows',
+        agentLabels: 'windows-2025',
       ])
     }
     printCallStack()
@@ -434,7 +434,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     assertTrue(assertMethodCallContainsPattern('powershell','make build'))
 
 
-    assertTrue(assertMethodCallContainsPattern('node', 'docker-windows'))
+    assertTrue(assertMethodCallContainsPattern('node', 'windows-2025'))
     // And the expected environment variables set to their default values
     assertTrue(assertMethodCallContainsPattern('withEnv', 'IMAGE_DIR=.'))
     assertTrue(assertMethodCallContainsPattern('withEnv', 'IMAGE_DOCKERFILE=Dockerfile'))
@@ -648,7 +648,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     mockPrincipalBranch()
     withMocks{
       script.call(testImageName, [
-        agentLabels: 'docker-windows',
+        agentLabels: 'windows-2025',
         targetplatforms: 'linux/arm64,linux/amd64',
       ])
     }
@@ -671,7 +671,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
       script.call(testImageName, [
         dockerBakeFile: 'bake.yml',
         targetplatforms: 'windows/amd64',
-        agentLabels: 'docker-windows',
+        agentLabels: 'windows-2025',
       ])
     }
 
@@ -692,7 +692,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     withMocks{
       script.call(testImageName, [
         targetplatforms: 'linux/amd64',
-        agentLabels: 'docker-windows',
+        agentLabels: 'windows-2025',
       ])
     }
     printCallStack()
@@ -733,7 +733,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     mockTag()
     withMocks{
       script.call(customImageNameWithTag,[
-        agentLabels: 'docker-windows',
+        agentLabels: 'windows-2025',
         targetplatforms: 'windows/amd64',
       ])
     }
@@ -746,7 +746,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     assertTrue(assertMethodCallContainsPattern('powershell','make lint'))
     assertTrue(assertMethodCallContainsPattern('powershell','make build'))
 
-    assertTrue(assertMethodCallContainsPattern('node', 'docker'))
+    assertTrue(assertMethodCallContainsPattern('node', 'windows-2025'))
     // And generated reports are recorded with named without ':' but '-' instead
     assertTrue(assertRecordIssues(fullCustomImageName.replaceAll(':','-')))
     // With the deploy step called with the correct image name
@@ -766,7 +766,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     mockTag()
     withMocks{
       script.call(testImageName,[
-        agentLabels: 'docker-windows',
+        agentLabels: 'windows-2025',
         targetplatforms: 'windows/amd64',
       ])
     }
@@ -779,7 +779,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     assertTrue(assertMethodCallContainsPattern('powershell','make lint'))
     assertTrue(assertMethodCallContainsPattern('powershell','make build'))
 
-    assertTrue(assertMethodCallContainsPattern('node', 'docker'))
+    assertTrue(assertMethodCallContainsPattern('node', 'windows-2025'))
     // And generated reports are recorded with named without ':' but '-' instead
     assertTrue(assertRecordIssues(fullCustomImageName.replaceAll(':','-')))
     // With the deploy step called with the correct image name
