@@ -6,58 +6,101 @@
  * See https://issues.jenkins-ci.org/browse/INFRA-947 for more
  */
 def call(List<String> files, Map params = [:]) {
-  def timeout = params.get('timeout') ?: '60'
-
   if (!infra.isTrusted() && !infra.isInfra()) {
-    error 'Can only call publishReports from within the trusted.ci environment'
+    error 'Can only call publishReports from within infra.ci or trusted.ci environment'
   }
 
-  withCredentials([string(credentialsId: 'azure-reports-access-key', variable: 'AZURE_STORAGE_KEY'),]) {
-    // Sanity Check to check that `az` is installed, in the PATH, and in a decent version
-    sh 'az version'
+  // Sanity check to check if the required tools are installed (or fail fast)
+  sh '''
+  az version
+  azcopy --version
+  '''
 
-    for(int i = 0; i < files.size(); ++i) {
+  Map infraFileShareOptions = [
+    fileShare: 'reports-jenkins-io',
+    fileShareStorageAccount: 'reportsjenkinsio',
+  ]
+  // Use an explicit Azure Credential unless caller sets Workload Identity
+  if (!params.useWorkloadIdentity) {
+    infraFileShareOptions['servicePrincipalCredentialsId'] = 'reports-jenkins-io-azurefile-serviceprincipal'
+  }
+
+  infra.withFileShareServicePrincipal(infraFileShareOptions) {
+    for(int i = 0; i <files.size(); ++i) {
       String filename = files[i]
-      withEnv(['HOME=/tmp']) {
-        String uploadFlags = ''
-        switch (filename) {
-          case ~/(?i).*\.html/:
-            uploadFlags = '--content-type="text/html"'
-            break
-          case ~/(?i).*\.css/:
-            uploadFlags = '--content-type="text/css"'
-            break
-          case ~/(?i).*\.json/:
-            uploadFlags = '--content-type="application/json"'
-            break
-          case ~/(?i).*\.js/:
-            uploadFlags = '--content-type="application/javascript"'
-            break
-          case ~/(?i).*\.gif/:
-            uploadFlags = '--content-type="image/gif"'
-            break
-          case ~/(?i).*\.png/:
-            uploadFlags = '--content-type="image/png"'
-            break
-        }
-        def directory = filename.split("/")
-        def basename = directory[directory.size() - 1]
-        def dirname = Arrays.copyOfRange(directory, 0, directory.size()-1 ).join("/")
+      String contentType = ''
 
+      switch (filename) {
+        case ~/(?i).*\.html/:
+          contentType = 'text/html'
+          break
+        case ~/(?i).*\.css/:
+          contentType = 'text/css'
+          break
+        case ~/(?i).*\.json/:
+          contentType = 'application/json'
+          break
+        case ~/(?i).*\.js/:
+          contentType = 'application/javascript'
+          break
+        case ~/(?i).*\.gif/:
+          contentType = 'image/gif'
+          break
+        case ~/(?i).*\.png/:
+          contentType = 'image/png'
+          break
+      }
+
+      String[] directory = filename.split("/")
+      String basename = directory[directory.size() - 1]
+      String dirname = Arrays.copyOfRange(directory, 0, directory.size()-1).join("/")
+
+      try {
         withEnv([
-          "TIMEOUT=${timeout}",
-          "FILENAME=${filename}",
-          "UPLOADFLAGS=${uploadFlags}",
+          "CONTENT_TYPE=${contentType}",
           "SOURCE_DIRNAME=${dirname ?: '.'}",
-          "DESTINATION_PATH=${dirname ?: '/'}",
+          "DESTINATION_PATH=${dirname ?: ''}",
           "PATTERN=${ basename ?: '*' }",
+          "IS_CREDENTIAL_LESS=${params.useWorkloadIdentity.toString()}",
         ]) {
-          // Blob container can be removed once files are uploaded on the azure file storage
-          sh 'az storage blob upload --account-name=prodjenkinsreports --container=reports --timeout=${TIMEOUT} --file=${FILENAME} --name=${FILENAME} ${UPLOADFLAGS} --overwrite'
+          sh '''
+          if [[ "${IS_CREDENTIAL_LESS}" == "true" ]]
+          then
+            # No query string (but a trailing slash in 'FILESHARE_SIGNED_URL') when using credential-less
 
-          // `az storage file upload` doesn't support file uploaded in a remote directory that doesn't exist but upload-batch yes. Unfortunately the cli syntax is a bit different and requires filename and directory name to be set differently.
-          sh 'az storage file upload-batch --account-name prodjenkinsreports --destination reports --source ${SOURCE_DIRNAME} --destination-path ${DESTINATION_PATH} --pattern ${PATTERN} ${UPLOADFLAGS}'
+            fileShareUrl="${FILESHARE_SIGNED_URL}"
+            # Assemble URL if there is a relative path provided and avoid double trailing slashes
+            if [ -n "${DESTINATION_PATH}" ]
+            then
+              fileShareUrl="${FILESHARE_SIGNED_URL}${DESTINATION_PATH%/}/"
+            fi
+          else
+            # Don't output sensitive information such as the SAS token in the querystring
+            set +x
+            fileShareUrl="${FILESHARE_SIGNED_URL}"
+            if [ -n "${DESTINATION_PATH}" ]
+            then
+              fileShareUrl="$(echo "${FILESHARE_SIGNED_URL}" | sed "s#/?#/${DESTINATION_PATH%/}/?#")"
+            fi
+          fi
+
+          # Synchronize the File Share content
+          azcopy copy \
+            --skip-version-check \
+            --put-md5 `# File length us used by default which can lead to errors for tiny text files` \
+            --content-type="${CONTENT_TYPE}" \
+            --recursive \
+            "${SOURCE_DIRNAME}/${PATTERN}" "${fileShareUrl}"
+          '''
         }
+      } catch (err) {
+        currentBuild.result = 'FAILURE'
+        sh '''
+              # Retrieve azcopy logs to archive them
+              cat $HOME/.azcopy/*.log > azcopy.log 2>/dev/null || echo "No azcopy logs found"
+          '''
+        archiveArtifacts 'azcopy.log'
+        throw err
       }
     }
   }

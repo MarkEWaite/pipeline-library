@@ -4,22 +4,24 @@ import java.util.Date
 import java.text.DateFormat
 
 // makecall is a function to concentrate all the call to 'make'
-def makecall(String action, String imageDeployName, String targetOperationSystem, String specificDockerBakeFile, String dockerBakeTarget) {
+def makecall(String action, String imageDeployName, String targetOperationSystem, String specificDockerBakeFile, String dockerBakeTarget, String cacheTo = '') {
   final String bakefileContent = libraryResource 'io/jenkins/infra/docker/jenkinsinfrabakefile.hcl'
-  // Please note that "make deploy" and the generated bake deploy file uses the environment variable "IMAGE_DEPLOY_NAME"
   if (isUnix()) {
     if (! specificDockerBakeFile) {
       specificDockerBakeFile = 'jenkinsinfrabakefile.hcl'
       writeFile file: specificDockerBakeFile, text: bakefileContent
     }
-    withEnv([
-      "DOCKER_BAKE_FILE=${specificDockerBakeFile}",
-      "DOCKER_BAKE_TARGET=${dockerBakeTarget}",
-      "IMAGE_DEPLOY_NAME=${imageDeployName}"
-    ]) {
-      sh 'export BUILDX_BUILDER_NAME=buildx-builder; docker buildx use "${BUILDX_BUILDER_NAME}" 2>/dev/null || docker buildx create --use --name="${BUILDX_BUILDER_NAME}"'
-      sh "make bake-$action"
-    }
+    withEnv(
+        [
+          "DOCKER_BAKE_FILE=${specificDockerBakeFile}",
+          "DOCKER_BAKE_TARGET=${dockerBakeTarget}",
+          "IMAGE_DEPLOY_NAME=${imageDeployName}",
+          "DOCKER_CACHE_TO=${cacheTo}",
+        ]
+        ) {
+          sh 'export BUILDX_BUILDER_NAME=buildx-builder; docker buildx use "${BUILDX_BUILDER_NAME}" 2>/dev/null || docker buildx create --use --name="${BUILDX_BUILDER_NAME}"'
+          sh "make bake-$action"
+        }
   } else {
     if (action == 'deploy') {
       if (env.TAG_NAME) {
@@ -37,20 +39,23 @@ def makecall(String action, String imageDeployName, String targetOperationSystem
   } // unix agent
 }
 
-def call(String imageShortName, Map userConfig=[:]) {
+def call(String imageShortName, Map userConfig =[:]) {
   def defaultConfig = [
     agentLabels: 'docker || linux-amd64-docker', // String expression for the labels the agent must match
-    automaticSemanticVersioning: false, // Do not automagically increase semantic version by default
+    automaticSemanticVersioning: true, // automagically increase semantic version by default
     dockerfile: 'Dockerfile', // Obvious default
     targetplatforms: '', // // Define the (comma separated) list of Docker supported platforms to build the image for. Defaults to `linux/amd64` when unspecified. Incompatible with the legacy `platform` attribute.
-    nextVersionCommand: 'jx-release-version', // Commmand line used to retrieve the next version
+    // git gc ensures we don't run into https://github.com/jenkins-infra/docker-jenkins-lts/issues/1084
+    nextVersionCommand: 'git gc && jx-release-version', // Commmand line used to retrieve the next version
     gitCredentials: 'github-app-infra.ci.jenkins.io-docker-deploy', // Credential ID for tagging and creating release
     imageDir: '.', // Relative path to the context directory for the Docker build
     registryNamespace: '', // Empty by default (means "autodiscover based on the current controller")
     unstash: '', // Allow to unstash files if not empty
     dockerBakeFile: '', // Specify the path to a custom Docker Bake file to use instead of the default one
     dockerBakeTarget: 'default', // Specify the target of a custom Docker Bake file to work with
-    disablePublication: false, // Allow to disable tagging and publication of container image and GitHub release (true by default)
+    cacheTo: '', // New parameter for Docker build cache export using cache-to
+    disablePublication: false, // Allow to disable tagging and publication of container image and GitHub release
+    publishToPrivateAzureRegistry: false, // Set to 'true' to publish the image into the private jenkins-infra private Azure Container Registry instead of DockerHub
   ]
   // Merging the 2 maps - https://blog.mrhaki.com/2010/04/groovy-goodness-adding-maps-to-map_21.html
   final Map finalConfig = defaultConfig << userConfig
@@ -89,7 +94,7 @@ def call(String imageShortName, Map userConfig=[:]) {
   // for now only one platform possible per windows build !
   String cstConfigSuffix = ''
   if (finalConfig.agentLabels.contains('windows') || finalConfig.targetplatforms.contains('windows')) {
-    if (finalConfig.targetplatforms.split(',').length > 1) {
+    if (finalConfig.targetplatforms.split(',').length> 1) {
       echo 'ERROR: with windows, only one platform can be specified within targetplatforms.'
       currentBuild.result = 'FAILURE'
       return
@@ -113,7 +118,9 @@ def call(String imageShortName, Map userConfig=[:]) {
   final InfraConfig infraConfig = new InfraConfig(env)
   final String defaultRegistryNamespace = infraConfig.getDockerRegistryNamespace()
   final String registryNamespace = finalConfig.registryNamespace ?: defaultRegistryNamespace
+  final String acrName = 'dockerhubmirror'
   final String imageName = registryNamespace + '/' + imageShortName
+  final String registryHost = finalConfig.publishToPrivateAzureRegistry ? "${acrName}.azurecr.io" : 'docker.io'
 
   echo "INFO: Resolved Container Image Name: ${imageName}"
 
@@ -125,6 +132,7 @@ def call(String imageShortName, Map userConfig=[:]) {
       "IMAGE_DOCKERFILE=${finalConfig.dockerfile}",
       "BUILD_TARGETPLATFORM=${finalConfig.targetplatforms.split(',')[0]}",
       "BAKE_TARGETPLATFORMS=${finalConfig.targetplatforms}",
+      "REGISTRY=${registryHost}",
     ]) {
       infra.withDockerPullCredentials{
         String nextVersion = ''
@@ -166,7 +174,13 @@ def call(String imageShortName, Map userConfig=[:]) {
         } // stage
 
         stage("Build ${imageName}") {
-          makecall('build', imageName, operatingSystem, finalConfig.dockerBakeFile, finalConfig.dockerBakeTarget)
+          if (env.BRANCH_IS_PRIMARY && finalConfig.cacheTo) {
+            infra.withDockerPushCredentials {
+              makecall('build', imageName, operatingSystem, finalConfig.dockerBakeFile, finalConfig.dockerBakeTarget, finalConfig.cacheTo)
+            }
+          } else {
+            makecall('build', imageName, operatingSystem, finalConfig.dockerBakeFile, finalConfig.dockerBakeTarget)
+          }
         } //stage
 
         // There can be 2 kind of tests: per image and per repository
@@ -186,7 +200,7 @@ def call(String imageShortName, Map userConfig=[:]) {
           } // if else
         } // each
 
-        if (env.BRANCH_IS_PRIMARY) {
+        if (env.BRANCH_IS_PRIMARY || env.TAG_NAME) {
           // Automatic tagging on principal branch is not enabled by default, show potential next version in PR anyway
           if (finalConfig.automaticSemanticVersioning) {
             stage("Get Next Version of ${imageName}") {
@@ -199,14 +213,28 @@ def call(String imageShortName, Map userConfig=[:]) {
               }
               echo "Next Release Version = ${nextVersion}"
             } // stage
+          } else {
+            if (env.TAG_NAME) {
+              // if a tag is scanned, it need to be the nextVersion
+              nextVersion = env.TAG_NAME
+            }
           } // if
 
           withEnv(["NEXT_VERSION=${nextVersion}"]) {
             // Only deploy on primary branch
             stage("Deploy ${imageName}") {
               if (!finalConfig.disablePublication) {
+                if (finalConfig.publishToPrivateAzureRegistry) {
+                  // Assume credential-less authentication (Azure Workload Identity)
+                  withEnv(["ACR_NAME=${acrName}"]) {
+                    sh '''
+                    az login --identity
+                    az acr login --name "${ACR_NAME}"
+                    '''
+                  }
+                }
                 infra.withDockerPushCredentials{
-                  makecall('deploy', imageName, operatingSystem, finalConfig.dockerBakeFile, finalConfig.dockerBakeTarget)
+                  makecall('deploy', imageName, operatingSystem, finalConfig.dockerBakeFile, finalConfig.dockerBakeTarget, '')
                 }
               } else {
                 echo 'INFO: publication disabled.'
@@ -219,10 +247,10 @@ def call(String imageShortName, Map userConfig=[:]) {
                 echo "Configuring credential.helper"
                 // The credential.helper will execute everything after the '!', here echoing the username, the password and an empty line to be passed to git as credentials when git needs it.
                 if (isUnix()) {
-                  sh 'git config --local credential.helper "!set -u; echo username=\\$GIT_USERNAME && echo password=\\$GIT_PASSWORD && echo"'
+                  sh 'git config credential.helper "!set -u; echo username=\\$GIT_USERNAME && echo password=\\$GIT_PASSWORD && echo"'
                 } else {
                   // Using 'bat' here instead of 'powershell' to avoid variable interpolation problem with $
-                  bat 'git config --local credential.helper "!sh.exe -c \'set -u; echo username=$GIT_USERNAME && echo password=$GIT_PASSWORD && echo"\''
+                  bat 'git config credential.helper "!sh.exe -c \'set -u; echo username=$GIT_USERNAME && echo password=$GIT_PASSWORD && echo"\''
                 }
 
                 withCredentials([
@@ -297,6 +325,7 @@ def call(String imageShortName, Map userConfig=[:]) {
               } // stage
             } // if
           } // withEnv NEXT_VERSION
+          publishBuildStatusReport()
         } // if
       } // infra.withDockerPullCredentials
     } // withEnv (outer)

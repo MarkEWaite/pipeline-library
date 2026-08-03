@@ -19,11 +19,12 @@ def call(Map params = [:]) {
   if (forkCount) {
     echo "Running parallel tests with forkCount=${forkCount}"
   }
-  if (timeoutValue > 180) {
+  if (timeoutValue> 180) {
     echo "Timeout value requested was $timeoutValue, lowering to 180 to avoid Jenkins project's resource abusive consumption"
     timeoutValue = 180
   }
 
+  boolean consumingIncrementals = false
   boolean publishingIncrementals = false
   boolean archivedArtifacts = false
   Map tasks = [failFast: failFast]
@@ -39,7 +40,11 @@ def call(Map params = [:]) {
     boolean skipTests = params?.tests?.skip
     boolean addToolEnv = !useContainerAgent || true // Always add tool env on markwaite.net
 
-    baselabel = infra.getBuildAgentLabel(platform, jdk, useContainerAgent)
+    baselabel = infra.getBuildAgentLabel([
+      useContainerAgent: useContainerAgent,
+      platform: platform,
+      jdk: jdk
+    ])
 
     if (scm.userRemoteConfigs[0].url.contains('gitea-server.markwaite.net')) {
       // Cloud agents cannot access gitea-server.markwaite.net
@@ -52,7 +57,7 @@ def call(Map params = [:]) {
         if (useContainerAgent) {
           label = baselabel
         } else {
-          if (retryCounter > 1) {
+          if (retryCounter> 1) {
             // Use a spot instance for the 2 first try [try 0 and 1] and nonspot for third and last [2]
             label = baselabel + ' && nonspot'
           } else {
@@ -73,7 +78,9 @@ def call(Map params = [:]) {
               stage("Checkout (${stageIdentifier})") {
                 infra.checkoutSCM(repo)
                 incrementals = fileExists('.mvn/extensions.xml') &&
-                    readFile('.mvn/extensions.xml').contains('git-changelist-maven-extension') && false // No incrementals on markwaite.net
+                    readFile('.mvn/extensions.xml').contains('git-changelist-maven-extension') &&
+                    fileExists('.mvn/maven.config') &&
+                    !readFile('.mvn/maven.config').contains('-Pmight-produce-incrementals-with-minimal-flattening') && false // No incrementals on markwaite.net
                 final String gitUnavailableMessage = '[buildPlugin] Git CLI may not be available'
                 withEnv(["GITUNAVAILABLEMESSAGE=${gitUnavailableMessage}"]) {
                   if (incrementals) {
@@ -123,6 +130,12 @@ def call(Map params = [:]) {
                     changelistF = "${pwd tmp: true}/changelist"
                     mavenOptions += "help:evaluate -Dexpression=changelist -Doutput=$changelistF"
                   }
+                }
+                if (fileExists('consume-incrementals')) {
+                  consumingIncrementals = true
+                } else {
+                  echo 'Forbidding use of Incremental dependencies. If you need to consume Incrementals, add a file named `consume-incrementals` to the repository root. (Contents arbitrary but conventionally a list of upstream PRs.) Then keep this PR in draft until the dependency has been switched to a release version and the marker file can be removed.'
+                  mavenOptions += '-P-consume-incrementals'
                 }
                 if (jenkinsVersion) {
                   mavenOptions += "-Djenkins.version=${jenkinsVersion} -Daccess-modifier-checker.failOnError=false"
@@ -243,10 +256,10 @@ def call(Map params = [:]) {
 
                   recordIssues(
                       enabledForFailure: true, tool: taskScanner(
-                      includePattern:'**/*.java',
-                      excludePattern:'**/target/**',
-                      highTags:'FIXME',
-                      normalTags:'TODO'),
+                          includePattern: '**/*.java',
+                          excludePattern: '**/target/**',
+                          highTags: 'FIXME',
+                          normalTags: 'TODO'),
                       sourceCodeEncoding: 'UTF-8',
                       skipBlames: true,
                       trendChartType: 'NONE'
@@ -307,11 +320,14 @@ def call(Map params = [:]) {
   if (publishingIncrementals) {
     infra.maybePublishIncrementals()
   }
+  if (consumingIncrementals) {
+    unstable "This build consumed Incremental dependencies. Remove the 'consume-incrementals' file before readying for review."
+  }
 }
 
 private void discoverReferenceBuild() {
   folders = env.JOB_NAME.split('/')
-  if (folders.length > 1) {
+  if (folders.length> 1) {
     discoverGitReferenceBuild(scm: folders[1])
   }
 }

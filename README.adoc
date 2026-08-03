@@ -166,7 +166,6 @@ Supported parameters:
 `artifacts`::
 (Optional) If `artifacts` is not null, invokes `archiveArtifacts` with the given string value.
 
-
 ==== Example
 
 [source, groovy]
@@ -207,6 +206,7 @@ Name of the docker image to build
 * disablePublication: (Optional, default to false) Allow to disable tagging and publication of container image and GitHub release
 
 ==== Example
+
 [source, groovy]
 ----
 buildDockerAndPublishImage('plugins-site-api')
@@ -217,18 +217,6 @@ buildDockerAndPublishImage('inbound-agent-maven:jdk8-nanoserver', [
       imageDir: 'maven/jdk8',
     ])
 ----
-
-is also called from `parallelDockerUpdatecli` with `config` within `buildDockerConfig` like this :
-[source, groovy]
-----
-parallelDockerUpdatecli([
-  imageName: 'wiki',
-  rebuildImageOnPeriodicJob: false,
-  updatecliConfig: [containerMemory: '1G'],
-  buildDockerConfig : [targetplatforms: 'linux/amd64,linux/arm64,linux/s390x']
-])
-----
-
 
 == Contribute
 

@@ -33,16 +33,40 @@ Object withDockerCredentials(Map orgAndCredentialsId, Closure body) {
   if (orgAndCredentialsId.error) {
     echo orgAndCredentialsId.msg
   } else {
-    env.DOCKERHUB_ORGANISATION = orgAndCredentialsId.organisation
-    withEnv(["CONTAINER_BIN=${env.CONTAINER_BIN ?: 'docker'}"]){
+    withEnv([
+      "CONTAINER_BIN=${env.CONTAINER_BIN ?: 'docker'}",
+      "DOCKERHUB_ORGANISATION=${orgAndCredentialsId.organisation}",
+      "DOCKERHUB_CREDENTIALS_ID=${orgAndCredentialsId.credentialId}",
+    ]){
       withCredentials([
         usernamePassword(credentialsId: orgAndCredentialsId.credentialId, passwordVariable: 'DOCKER_CONFIG_PSW', usernameVariable: 'DOCKER_CONFIG_USR')
       ]) {
         // Logging in on the Dockerhub helps to avoid request limit from DockerHub
         if (isUnix()) {
-          sh 'echo "${DOCKER_CONFIG_PSW}" | "${CONTAINER_BIN}" login --username "${DOCKER_CONFIG_USR}" --password-stdin'
+          sh '''
+          echo "${DOCKER_CONFIG_PSW}" | "${CONTAINER_BIN}" login --username "${DOCKER_CONFIG_USR}" --password-stdin
+          set +x
+          ip_all_json="$(curl -s https://ifconfig.me/all.json | jq || true)"
+          echo "INFO: logged in Docker Hub as '${DOCKER_CONFIG_USR}' with '${DOCKERHUB_CREDENTIALS_ID}' credentials, namespace: ${DOCKERHUB_ORGANISATION}"
+          if [[ -n "${ip_all_json}" ]]; then
+            echo 'INFO: IP address details from ifconfig.me/all.json:'
+            echo "${ip_all_json}"
+          fi
+          '''
         } else {
-          pwsh 'Write-Output ${env:DOCKER_CONFIG_PSW} | & ${Env:CONTAINER_BIN} login --username ${Env:DOCKER_CONFIG_USR} --password-stdin'
+          pwsh '''
+          Write-Output ${env:DOCKER_CONFIG_PSW} | & ${Env:CONTAINER_BIN} login --username ${Env:DOCKER_CONFIG_USR} --password-stdin
+          try {
+              $ipAll = (Invoke-RestMethod -Uri "https://ifconfig.me/all.json" -TimeoutSec 5 | Out-String)
+          } catch {
+              $ipAll = ""
+          }
+          Write-Host "INFO: logged in Docker Hub as '$env:DOCKER_CONFIG_USR' with '$env:DOCKERHUB_CREDENTIALS_ID' credentials, namespace: $env:DOCKERHUB_ORGANISATION"
+          if ($ipAll) {
+            Write-Host 'INFO: IP address details from ifconfig.me/all.json:'
+            Write-Host $ipAll
+          }
+          '''
         }
 
         body.call()
@@ -72,11 +96,13 @@ Object withDockerPullCredentials(Closure body) {
  * Execute the body passed as closure with an Azure File Share URL
  * signed with a SAS token with an expiry date of 10 minutes by default,
  * stored in FILESHARE_SIGNED_URL environment variable
- * @param options.servicePrincipalCredentialsId Azure Service Principal credentials id to use (must has Storage Account Contributor on the File Share Storage Account)
+ * If no credentials id is passed as option, it will login into Azure with the agent's user assigned identity service principal ("credential-less")
+ * In each case, the service principal must has Storage Account Contributor on the File Share Storage Account
+ * @param options.servicePrincipalCredentialsId Azure Service Principal credentials id to use. Don't pass it for credential-less
  * @param options.fileShare Azure File Share name to use
  * @param options.fileShareStorageAccount Storage Account name of the Azure File Share to use (needed to generate the SAS token)
- * @param options.durationInMinute duration in minutes of the SAS token before expiration (default value: 10)
- * @param options.permissions SAS token permissions (default value: "dlrw")
+ * @param options.durationInMinute duration in minutes of the SAS token before expiration (default value: 10). Note: not taken in account in credential-less case
+ * @param options.permissions SAS token permissions (default value: "dlrw"). Note: not taken in account in credential-less case
  * @param body closure to execute
  */
 Object withFileShareServicePrincipal(Map options, Closure body) {
@@ -90,8 +116,8 @@ Object withFileShareServicePrincipal(Map options, Closure body) {
     issue += "ERROR: no Windows implementation yet, skipping.\n"
   }
   // Check required options
-  if (!options.servicePrincipalCredentialsId || !options.fileShare || !options.fileShareStorageAccount) {
-    issue += "ERROR: At least one of these required options is missing: servicePrincipalCredentialsId, fileShare, fileShareStorageAccount\n"
+  if (!options.fileShare || !options.fileShareStorageAccount) {
+    issue += "ERROR: At least one of these required options is missing: fileShare, fileShareStorageAccount\n"
   }
   // Return early if there is an issue
   if (issue) {
@@ -106,34 +132,55 @@ Object withFileShareServicePrincipal(Map options, Closure body) {
   if (!options.permissions) {
     options.permissions = 'dlrw'
   }
-  withCredentials([
-    azureServicePrincipal(
-    credentialsId: options.servicePrincipalCredentialsId,
-    clientIdVariable: 'JENKINS_INFRA_FILESHARE_CLIENT_ID',
-    clientSecretVariable: 'JENKINS_INFRA_FILESHARE_CLIENT_SECRET',
-    tenantIdVariable: 'JENKINS_INFRA_FILESHARE_TENANT_ID'
-    )
-  ]){
-    withEnv([
-      "STORAGE_NAME=${options.fileShareStorageAccount}",
-      "STORAGE_FILESHARE=${options.fileShare}",
-      "STORAGE_DURATION_IN_MINUTE=${options.durationInMinute}",
-      "STORAGE_PERMISSIONS=${options.permissions}",
-    ]) {
-      echo "INFO: generating a signed URL for the ${options.fileShare} file share..."
+  // If a service principal credentials id is passed, generate a fileshare signed URL using this credentials
+  if (options.servicePrincipalCredentialsId) {
+    withCredentials([
+      azureServicePrincipal(
+          credentialsId: options.servicePrincipalCredentialsId,
+          clientIdVariable: 'JENKINS_INFRA_FILESHARE_CLIENT_ID',
+          clientSecretVariable: 'JENKINS_INFRA_FILESHARE_CLIENT_SECRET',
+          tenantIdVariable: 'JENKINS_INFRA_FILESHARE_TENANT_ID'
+          )
+    ]){
+      echo "INFO: ${options.fileShare} file share signed URL expiring in ${options.durationInMinute} minute(s) available in \$FILESHARE_SIGNED_URL"
+      generateFileShareSignedURL(options, body)
+    }
+  } else {
+    echo "INFO: credential-less (using user assigned identity service principal), azcopy logged in and ${options.fileShare} file share URL available in \$FILESHARE_SIGNED_URL"
+    generateFileShareSignedURL(options, body)
+  }
+}
 
-      // Retrieve the script to generate a SAS token with the Service Principal for the File Share and return the file share signed URL
-      final String scriptTmpPath = pwd(tmp: true) + '/get-fileshare-signed-url.sh'
-      final String getSignedUrlScript = libraryResource 'get-fileshare-signed-url.sh'
-      writeFile file: scriptTmpPath, text: getSignedUrlScript
+/**
+ * Execute the body passed as closure with an Azure File Share URL
+ * signed with a SAS token with an expiry date of 10 minutes by default,
+ * stored in FILESHARE_SIGNED_URL environment variable.
+ * The service principal used must has Storage Account Contributor on the File Share Storage Account.
+ * This service principal can be either from an Azure credentials, or from the agent's user assigned identity.
+ * This function should not be called directly.
+ * @param options.fileShare Azure File Share name to use
+ * @param options.fileShareStorageAccount Storage Account name of the Azure File Share to use (needed to generate the SAS token)
+ * @param options.durationInMinute duration in minutes of the SAS token before expiration (default value: 10). Note: not taken in account in credential-less case
+ * @param options.permissions SAS token permissions (default value: "dlrw"). Note: not taken in account in credential-less case
+ * @param body closure to execute
+ */
+Object generateFileShareSignedURL(Map options, Closure body) {
+  withEnv([
+    "STORAGE_NAME=${options.fileShareStorageAccount}",
+    "STORAGE_FILESHARE=${options.fileShare}",
+    "STORAGE_DURATION_IN_MINUTE=${options.durationInMinute}",
+    "STORAGE_PERMISSIONS=${options.permissions}",
+  ]) {
+    // Retrieve the script to generate a SAS token with the Service Principal for the File Share and return the file share signed URL
+    final String scriptTmpPath = pwd(tmp: true) + '/get-fileshare-signed-url.sh'
+    final String getSignedUrlScript = libraryResource 'get-fileshare-signed-url.sh'
+    writeFile file: scriptTmpPath, text: getSignedUrlScript
 
-      // Call the script and retrieve the signed URL
-      signedUrl = sh(script: "bash ${scriptTmpPath}", returnStdout: true).trim()
+    // Call the script and retrieve the signed URL
+    final String signedUrl = sh(script: "bash ${scriptTmpPath}", returnStdout: true).trim()
 
-      withEnv(["FILESHARE_SIGNED_URL=${signedUrl}"]) {
-        echo "INFO: ${options.fileShare} file share signed URL expiring in ${options.durationInMinute} minute(s) available in \$FILESHARE_SIGNED_URL"
-        body.call()
-      }
+    withEnv(["FILESHARE_SIGNED_URL=${signedUrl}"]) {
+      body.call()
     }
   }
 }
@@ -143,8 +190,8 @@ Object checkoutSCM(String repo = null) {
   // Fix https://github.com/jenkins-infra/helpdesk/issues/3865 with autocrlf
   if (!isUnix()) {
     bat '''
-        git config set --system core.autocrlf true
-        git config set --system core.longPaths true
+        git config set --global core.autocrlf true
+        git config set --global core.longPaths true
         '''
   }
 
@@ -228,8 +275,88 @@ Object runMaven(List<String> options, String jdk = '8', List<String> extraEnv = 
   withArtifactCachingProxy(useArtifactCachingProxy) {
     mvnOptions.addAll(options)
     mvnOptions.unique()
+
+    // Could run 'mvn -Dmaven.repo.local=/tmp help:evaluate -Dexpression=settings.localRepository -q -DforceStdout',
+    // in a shell step but mvnOptions is a mix of flags and goals so we have to parse options anyway
+    String foundLocalRepo = mvnOptions.find { opt ->
+      opt ==~ /^\-Dmaven\.repo\.local=.*/
+    }
+    String m2repo = ''
+    if (foundLocalRepo) {
+      m2repo = foundLocalRepo.split('=')[1]
+    }
+    loadMavenLocalCacheIfAny(m2repo)
+
     String command = "mvn ${mvnOptions.join(' ')}"
     runWithMaven(command, jdk, extraEnv, addToolEnv)
+  }
+}
+
+/**
+ * Load Maven cache into local repository from the cachePath archive (tar.gz)
+ * @param mvnLocalRepo (required) path to the Maven local repository directory
+ */
+Object loadMavenLocalCacheIfAny(String mvnLocalRepo, String cachePath = '') {
+  catchError(message: 'Could not load Maven Cache. Continuing with empty M2 repository...', buildResult: 'SUCCESS', stageResult: 'UNSTABLE', catchInterruptions: false) {
+    if (isUnix()) {
+      // Default archive name comes from https://github.com/jenkins-infra/helm-charts/blob/2db07ddfe7df0847f975486226e342ba7bf434cd/charts/maven-cacher/maven-cacher.sh#L7
+      // Default dirname comes from the agents mountpoints of Linux container and Linux VM agents in jenkins-infra/jenkins-infra
+      // It's a convention, we can do better (automatic update? shared metadata? other) but at least the reader is aware
+      final String mvnCachePath = (cachePath ?: '/cache/maven-bom-local-repo.tar.gz')
+      withEnv(["MVN_LOCAL_REPO=${mvnLocalRepo}", "MVN_CACHE_PATH=${mvnCachePath}"]) {
+        echo "Trying to load Maven cache from ${mvnCachePath} to ${mvnLocalRepo}..."
+        sh '''
+        : "${MVN_CACHE_PATH:?MVN_CACHE_PATH must be set}"
+        export MVN_LOCAL_REPO="${MVN_LOCAL_REPO:-$HOME/.m2/repository}"
+
+        mkdir -p "${MVN_LOCAL_REPO}"
+
+        if test -f "${MVN_CACHE_PATH}"
+        then
+          # MVN_CACHE_PATH might be served from a CSI S3 volume which does not support seeking.
+          # tar requires a seekable source, so we copy the archive locally first.
+          # The copy lands in the parent of MVN_LOCAL_REPO which has sufficient disk space.
+          cache_archive_name="$(dirname "${MVN_LOCAL_REPO}")/$(basename "${MVN_CACHE_PATH}")"
+          time cp "${MVN_CACHE_PATH}" "${cache_archive_name}"
+          time tar xzf "${cache_archive_name}" -C "${MVN_LOCAL_REPO}"
+          rm -f "${cache_archive_name}"
+        else
+          echo "${MVN_CACHE_PATH} archive not found: skipping maven cache retrieval."
+        fi
+        '''
+      }
+    } else {
+      // Default archive name comes from https://github.com/jenkins-infra/helm-charts/blob/2db07ddfe7df0847f975486226e342ba7bf434cd/charts/maven-cacher/maven-cacher.sh#L7
+      // Default dirname comes from the agents mountpoints of Windows VM agents in jenkins-infra/jenkins-infra
+      // It's a convention, we can do better (automatic update? shared metadata? other) but at least the reader is aware
+      final String mvnCachePath = (cachePath ?: 'C:/cache/maven-bom-local-repo.tar.gz')
+      withEnv(["MVN_LOCAL_REPO=${mvnLocalRepo}", "MVN_CACHE_PATH=${mvnCachePath}"]) {
+        echo "Trying to load Maven cache from ${mvnCachePath} to ${mvnLocalRepo}..."
+        pwsh '''
+        if (-not $env:MVN_LOCAL_REPO) {
+          $env:MVN_LOCAL_REPO = Join-Path $HOME ".m2/repository"
+        }
+        New-Item -ItemType Directory -Force -Path $env:MVN_LOCAL_REPO | Out-Null
+
+        if ($env:MVN_CACHE_PATH -and (Test-Path -PathType Leaf $env:MVN_CACHE_PATH)) {
+          # MVN_CACHE_PATH might be served from a CSI S3 volume which does not support seeking.
+          # tar requires a seekable source, so we copy the archive locally first.
+          # The copy lands in the parent of MVN_LOCAL_REPO which has sufficient disk space.
+          $cacheArchiveName = Join-Path (Split-Path -Parent $env:MVN_LOCAL_REPO) (Split-Path -Leaf $env:MVN_CACHE_PATH)
+
+          $elapsed = (Measure-Command { Copy-Item $env:MVN_CACHE_PATH $cacheArchiveName }).TotalSeconds
+          Write-Host "cp: ${elapsed}s"
+
+          $elapsed = (Measure-Command { tar xzf $cacheArchiveName -C $env:MVN_LOCAL_REPO }).TotalSeconds
+          Write-Host "tar: ${elapsed}s"
+
+          Remove-Item -Force $cacheArchiveName
+        } else {
+          Write-Host "${env:MVN_CACHE_PATH} archive not found: skipping maven cache retrieval."
+        }
+        '''
+      }
+    }
   }
 }
 
@@ -256,10 +383,6 @@ Object runMaven(List<String> options, Integer jdk, List<String> extraEnv = null,
  */
 Object runWithMaven(String command, String jdk = '8', List<String> extraEnv = null, Boolean addToolEnv = true) {
   List<String> javaEnv = []
-  if (addToolEnv) {
-    javaEnv += "PATH+MAVEN=${tool 'mvn'}/bin"
-  }
-
   if (extraEnv) {
     javaEnv.addAll(extraEnv)
   }
@@ -437,26 +560,56 @@ void publishDeprecationCheck(String deprecationSummary, String deprecationMessag
   publishChecks name: 'pipeline-library', summary: deprecationSummary, conclusion: 'NEUTRAL', text: deprecationMessage
 }
 
-String getBuildAgentLabel(String platform, String jdk, Boolean useContainerAgent) {
-  if (useContainerAgent) {
-    if (platform == 'linux' || platform == 'windows') {
-      String agentContainerLabel = 'maven-' + jdk
-      if (platform == 'windows') {
-        agentContainerLabel += '-windows'
-      }
-      return agentContainerLabel
-    }
-  } else {
-    switch(platform) {
-      case 'windows':
-        return 'docker-windows'
-        break
-      case 'linux':
-        return 'vm && linux'
-        break
-      default:
-        echo "WARNING: Unknown Virtual Machine platform '${platform}'. Set useContainerAgent to 'true' unless you want to be in uncharted territory."
-        return platform
-    }
+String getBuildAgentLabel(Map params = [:]) {
+  Boolean useContainerAgent = params.containsKey('useContainerAgent') ? params.useContainerAgent : null
+  String platform = params.containsKey('platform') ? params.platform : null
+  String jdk = params.containsKey('jdk') ? params.jdk : null
+  Integer spotRetryCounter = params.containsKey('spotRetryCounter') ? params.spotRetryCounter : 0
+  return useContainerAgent ? containerAgentLabel(platform, jdk) : vmAgentLabel(platform, spotRetryCounter)
+}
+
+private String containerAgentLabel(String platform, String jdk) {
+  String label = "maven-${jdk}"
+  switch(platform) {
+    case 'linux':
+      return label
+    case 'windows':
+      return "${label}-windows"
+    default:
+      echo "WARNING: Unknown container platform '${platform}'. Set useContainerAgent to 'false' unless you want to be in uncharted territory."
+      return platform
   }
+}
+
+private String vmAgentLabel(String platform, Integer spotRetryCounter) {
+  switch(platform) {
+    case 'linux':
+      return 'vm && linux'
+    case 'windows':
+      return 'windows-2025'
+    // For docker controller and agents jobs
+    case 'docker-highmem':
+      if (isTrusted()) {
+        echo 'INFO: running on trusted.ci.jenkins.io, fallback to "linux" agent'
+        return 'linux'
+      }
+      return getSpotOrNonSpotAgentLabel('docker-highmem', spotRetryCounter)
+    case ~/windows-.*/:
+      return getSpotOrNonSpotAgentLabel(platform, spotRetryCounter)
+    default:
+      echo "WARNING: Unknown Virtual Machine platform '${platform}'. Set useContainerAgent to 'true' unless you want to be in uncharted territory."
+      return platform
+  }
+}
+
+private String getSpotOrNonSpotAgentLabel(String agentLabel, Integer spotRetryCounter) {
+  if (isTrusted()) {
+    echo 'INFO: running on trusted.ci.jenkins.io, no "spot" or "nonspot" agents'
+    return agentLabel
+  }
+  if (spotRetryCounter> 1) {
+    echo 'INFO: more than one retry, using "nonspot" agent'
+    return "${agentLabel} && nonspot"
+  }
+  return "${agentLabel} && spot"
 }

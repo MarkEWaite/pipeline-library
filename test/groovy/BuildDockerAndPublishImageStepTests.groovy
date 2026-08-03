@@ -21,7 +21,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
   static final String fullTestImageName = defaultDockerRegistryNamespace + '/' + testImageName
   static final String defaultGitTag = '1.0.0'
   static final String defaultGitTagIncludingImageName = '1.0.0-bitcoinminerimage'
-  static final String defaultNextVersionCommand = 'jx-release-version'
+  static final String defaultNextVersionCommand = 'git gc && jx-release-version'
   static final String defaultOrigin = 'https://github.com/org/repository.git'
   static final String defaultReleaseId = '12345'
   static final String defaultDockerBakeFile = 'jenkinsinfrabakefile.hcl'
@@ -44,7 +44,9 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
       case {command.contains('gh api -X PATCH')}:
         return (noReleaseDraft ? '' : defaultReleaseId)
         break
-      case {command.contains(defaultNextVersionCommand + ' -debug --previous-version')}:
+      case {
+        command.contains(defaultNextVersionCommand + ' -debug --previous-version')
+      }:
         return defaultGitTagIncludingImageName
         break
       case defaultNextVersionCommand:
@@ -63,13 +65,18 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     // Mock Pipeline methods which are not already declared in the parent class
     helper.registerAllowedMethod('hadoLint', [Map.class], { m -> m })
     helper.registerAllowedMethod('fileExists', [String.class], { true })
-    binding.setVariable('infra', ['withDockerPullCredentials': {body -> body()}, 'withDockerPushCredentials': {body ->body()}])
+    binding.setVariable('infra', ['withDockerPullCredentials': {body ->
+        body()
+      }, 'withDockerPushCredentials': {body ->
+        body()
+      }])
     helper.registerAllowedMethod('sh', [Map.class], { m ->
       return shellMock(m.script)
     })
     helper.registerAllowedMethod('powershell', [Map.class], { m ->
       return shellMock(m.script)
     })
+    helper.registerAllowedMethod('publishBuildStatusReport', [], {})
 
     addEnvVar('WORKSPACE', '/tmp')
 
@@ -128,19 +135,11 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
   }
 
   Boolean assertTagPushed(String newVersion) {
-    return assertMethodCallContainsPattern('echo','Configuring credential.helper') \
-      && assertMethodCallContainsPattern('echo',"Tagging and pushing the new version: ${newVersion}") \
-      && (assertMethodCallContainsPattern('sh','git config user.name "${GIT_USERNAME}"') || assertMethodCallContainsPattern('powershell','git config user.name "$env:GIT_USERNAME"')) \
-      && (assertMethodCallContainsPattern('sh','git config user.email "jenkins-infra@googlegroups.com"') || assertMethodCallContainsPattern('powershell','git config user.email "jenkins-infra@googlegroups.com"')) \
-      && (assertMethodCallContainsPattern('sh','git tag -a "${NEXT_VERSION}" -m "${IMAGE_NAME}"') || assertMethodCallContainsPattern('powershell','git tag -a "$env:NEXT_VERSION" -m "$env:IMAGE_NAME"')) \
-      && (assertMethodCallContainsPattern('sh','git push origin --tags') || assertMethodCallContainsPattern('powershell','git push origin --tags'))
+    return assertMethodCallContainsPattern('echo','Configuring credential.helper') && assertMethodCallContainsPattern('echo',"Tagging and pushing the new version: ${newVersion}") && (assertMethodCallContainsPattern('sh','git config user.name "${GIT_USERNAME}"') || assertMethodCallContainsPattern('powershell','git config user.name "$env:GIT_USERNAME"')) && (assertMethodCallContainsPattern('sh','git config user.email "jenkins-infra@googlegroups.com"') || assertMethodCallContainsPattern('powershell','git config user.email "jenkins-infra@googlegroups.com"')) && (assertMethodCallContainsPattern('sh','git tag -a "${NEXT_VERSION}" -m "${IMAGE_NAME}"') || assertMethodCallContainsPattern('powershell','git tag -a "$env:NEXT_VERSION" -m "$env:IMAGE_NAME"')) && (assertMethodCallContainsPattern('sh','git push origin --tags') || assertMethodCallContainsPattern('powershell','git push origin --tags'))
   }
 
   Boolean assertReleaseCreated() {
-    return assertMethodCallContainsPattern('stage','GitHub Release') \
-      && assertMethodCallContainsPattern('withCredentials', 'GITHUB_TOKEN') \
-      && assertMethodCallContainsPattern('withCredentials', 'GITHUB_USERNAME') \
-      && !assertMethodCallContainsPattern('echo', 'No next release draft found.')
+    return assertMethodCallContainsPattern('stage','GitHub Release') && assertMethodCallContainsPattern('withCredentials', 'GITHUB_TOKEN') && assertMethodCallContainsPattern('withCredentials', 'GITHUB_USERNAME') && !assertMethodCallContainsPattern('echo', 'No next release draft found.')
   }
 
   @Test
@@ -170,6 +169,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     assertTrue(assertMethodCallContainsPattern('withEnv', 'IMAGE_DOCKERFILE=Dockerfile'))
     assertTrue(assertMethodCallContainsPattern('withEnv', 'BAKE_TARGETPLATFORMS=linux/amd64'))
     assertTrue(assertMethodCallContainsPattern('withEnv', 'IMAGE_DEPLOY_NAME=' + fullTestImageName))
+    assertTrue(assertMethodCallContainsPattern('withEnv', 'REGISTRY=docker.io'))
 
     // And generated reports are recorded
     assertTrue(assertRecordIssues())
@@ -180,8 +180,11 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     // And `unstash` isn't called
     assertFalse(assertMethodCall('unstash'))
 
-    // But no release created automatically
-    assertFalse(assertTagPushed(defaultGitTag))
+    // And release created automatically
+    assertTrue(assertTagPushed(defaultGitTag))
+
+    // Publish build status report on main branch
+    assertTrue(assertMethodCall('publishBuildStatusReport'))
 
     // And all mocked/stubbed methods have to be called
     verifyMocks()
@@ -212,8 +215,8 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     assertMethodCallContainsPattern('sh','make bake-deploy')
     assertMethodCallContainsPattern('withEnv', "IMAGE_DEPLOY_NAME=${fullCustomImageName}")
 
-    // But no tag pushed
-    assertFalse(assertTagPushed(defaultGitTag))
+    // When Tag is manually pushed
+    assertTrue(assertTagPushed(defaultGitTag))
     // And all mocked/stubbed methods have to be called
     verifyMocks()
   }
@@ -346,6 +349,8 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     assertFalse(assertMethodCallContainsPattern('sh','make bake-deploy'))
     // And no release (no tag)
     assertFalse(assertTagPushed(defaultGitTag))
+    // Does not publish build status report
+    assertFalse(assertMethodCall('publishBuildStatusReport'))
     // And all mocked/stubbed methods have to be called
     verifyMocks()
   }
@@ -354,7 +359,9 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
   void itSkipTestStageIfNoSpecificCSTFile() throws Exception {
     def script = loadScript(scriptName)
     // when building a Docker Image with a default configuration and no cst.yml file found
-    helper.registerAllowedMethod('fileExists', [String.class], { s -> return !s.contains('/cst.yml') })
+    helper.registerAllowedMethod('fileExists', [String.class], { s ->
+      return !s.contains('/cst.yml')
+    })
     withMocks{
       script.call(testImageName)
     }
@@ -372,7 +379,9 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
   void itSkipTestStageIfNoCommonCSTFile() throws Exception {
     def script = loadScript(scriptName)
     // when building a Docker Image with a default configuration and no cst.yml file found
-    helper.registerAllowedMethod('fileExists', [String.class], { s -> return !s.contains('/common-cst.yml') })
+    helper.registerAllowedMethod('fileExists', [String.class], { s ->
+      return !s.contains('/common-cst.yml')
+    })
     withMocks{
       script.call(testImageName)
     }
@@ -414,7 +423,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     def script = loadScript(scriptName)
     withMocks {
       script.call(testImageName, [
-        agentLabels: 'docker-windows',
+        agentLabels: 'windows-2025',
       ])
     }
     printCallStack()
@@ -427,7 +436,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     assertTrue(assertMethodCallContainsPattern('powershell','make build'))
 
 
-    assertTrue(assertMethodCallContainsPattern('node', 'docker-windows'))
+    assertTrue(assertMethodCallContainsPattern('node', 'windows-2025'))
     // And the expected environment variables set to their default values
     assertTrue(assertMethodCallContainsPattern('withEnv', 'IMAGE_DIR=.'))
     assertTrue(assertMethodCallContainsPattern('withEnv', 'IMAGE_DOCKERFILE=Dockerfile'))
@@ -484,8 +493,8 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     // And `unstash` is called
     assertTrue(assertMethodCallContainsPattern('unstash', 'stashName'))
 
-    // But no release created automatically
-    assertFalse(assertTagPushed(defaultGitTag))
+    // And release created automatically
+    assertTrue(assertTagPushed(defaultGitTag))
 
     // And all mocked/stubbed methods have to be called
     verifyMocks()
@@ -641,7 +650,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     mockPrincipalBranch()
     withMocks{
       script.call(testImageName, [
-        agentLabels: 'docker-windows',
+        agentLabels: 'windows-2025',
         targetplatforms: 'linux/arm64,linux/amd64',
       ])
     }
@@ -664,7 +673,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
       script.call(testImageName, [
         dockerBakeFile: 'bake.yml',
         targetplatforms: 'windows/amd64',
-        agentLabels: 'docker-windows',
+        agentLabels: 'windows-2025',
       ])
     }
 
@@ -685,7 +694,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     withMocks{
       script.call(testImageName, [
         targetplatforms: 'linux/amd64',
-        agentLabels: 'docker-windows',
+        agentLabels: 'windows-2025',
       ])
     }
     printCallStack()
@@ -726,7 +735,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     mockTag()
     withMocks{
       script.call(customImageNameWithTag,[
-        agentLabels: 'docker-windows',
+        agentLabels: 'windows-2025',
         targetplatforms: 'windows/amd64',
       ])
     }
@@ -739,7 +748,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     assertTrue(assertMethodCallContainsPattern('powershell','make lint'))
     assertTrue(assertMethodCallContainsPattern('powershell','make build'))
 
-    assertTrue(assertMethodCallContainsPattern('node', 'docker'))
+    assertTrue(assertMethodCallContainsPattern('node', 'windows-2025'))
     // And generated reports are recorded with named without ':' but '-' instead
     assertTrue(assertRecordIssues(fullCustomImageName.replaceAll(':','-')))
     // With the deploy step called with the correct image name
@@ -759,7 +768,7 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     mockTag()
     withMocks{
       script.call(testImageName,[
-        agentLabels: 'docker-windows',
+        agentLabels: 'windows-2025',
         targetplatforms: 'windows/amd64',
       ])
     }
@@ -772,12 +781,64 @@ class BuildDockerAndPublishImageStepTests extends BaseTest {
     assertTrue(assertMethodCallContainsPattern('powershell','make lint'))
     assertTrue(assertMethodCallContainsPattern('powershell','make build'))
 
-    assertTrue(assertMethodCallContainsPattern('node', 'docker'))
+    assertTrue(assertMethodCallContainsPattern('node', 'windows-2025'))
     // And generated reports are recorded with named without ':' but '-' instead
     assertTrue(assertRecordIssues(fullCustomImageName.replaceAll(':','-')))
     // With the deploy step called with the correct image name
     assertTrue(assertMethodCallContainsPattern('powershell','make deploy'))
     assertTrue(assertMethodCallContainsPattern('withEnv', "IMAGE_DEPLOY_NAME=jenkinsciinfra/bitcoinMinerImage:1.0.0"))
+
+    // And all mocked/stubbed methods have to be called
+    verifyMocks()
+  }
+
+  @Test
+  void itBuildsWithCacheToParameterProvided() throws Exception {
+    def script = loadScript(scriptName)
+    mockPrincipalBranch()
+    final String cacheValue = "type=inline"
+    withMocks {
+      script.call(testImageName, [cacheTo: cacheValue])
+    }
+    printCallStack()
+    assertJobStatusSuccess()
+    assertTrue(assertMethodCallContainsPattern('sh', 'make bake-build'))
+    assertTrue(assertMethodCallContainsPattern('withEnv', "DOCKER_CACHE_TO=${cacheValue}"))
+    verifyMocks()
+  }
+
+  @Test
+  void itBuildsAndDeploysOnPrivateAzureRegistry() throws Exception {
+    def script = loadScript(scriptName)
+
+    mockPrincipalBranch()
+
+    withMocks {
+      script.call(testImageName, [
+        publishToPrivateAzureRegistry: true,
+      ])
+    }
+    printCallStack()
+
+    // Then we expect a successful build with the code cloned
+    assertJobStatusSuccess()
+
+    // With the common workflow run as expected
+    assertTrue(assertMethodCallContainsPattern('libraryResource','io/jenkins/infra/docker/Makefile'))
+    assertTrue(assertMethodCallContainsPattern('sh','make bake-build'))
+    assertTrue(assertMethodCallContainsPattern('node', 'docker'))
+
+    // And the Azure credential-less authentication is performed
+    assertTrue(assertMethodCallContainsPattern('withEnv', 'ACR_NAME=dockerhubmirror'))
+    assertTrue(assertMethodCallContainsPattern('sh', 'az login --identity'))
+    assertTrue(assertMethodCallContainsPattern('sh', 'az acr login --name "${ACR_NAME}"'))
+
+    // And the expected image name (with registry prefix) is set
+    assertTrue(assertMethodCallContainsPattern('withEnv', 'IMAGE_DEPLOY_NAME=' + fullTestImageName))
+    assertTrue(assertMethodCallContainsPattern('withEnv', 'REGISTRY=dockerhubmirror.azurecr.io'))
+
+    // And the deploy step called
+    assertTrue(assertMethodCallContainsPattern('sh','make bake-deploy'))
 
     // And all mocked/stubbed methods have to be called
     verifyMocks()

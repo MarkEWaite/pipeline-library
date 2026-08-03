@@ -15,7 +15,9 @@ class BuildPluginStepTests extends BaseTest {
   void setUp() throws Exception {
     super.setUp()
     // It is expected to be on Maven by default. Override this behavior when you need to specialize
-    helper.registerAllowedMethod('fileExists', [String.class], { s -> return s.equals('pom.xml') })
+    helper.registerAllowedMethod('fileExists', [String.class], { s ->
+      return s.equals('pom.xml')
+    })
     env.NODE_LABELS = 'docker'
     env.JOB_NAME = 'build/plugin/test'
     // Testing by default on the primary branch
@@ -40,7 +42,7 @@ class BuildPluginStepTests extends BaseTest {
   void test_getConfigurations_explicit_without_platform() throws Exception {
     def script = loadScript(scriptName)
     try {
-      script.getConfigurations(configurations: [[ jdk: '1.8' ]])
+      script.getConfigurations(configurations: [[jdk: '1.8']])
     } catch(e) {
       //NOOP
     }
@@ -53,7 +55,7 @@ class BuildPluginStepTests extends BaseTest {
   void test_getConfigurations_explicit_without_jdk() throws Exception {
     def script = loadScript(scriptName)
     try {
-      script.getConfigurations(configurations: [[ platform: 'linux' ]])
+      script.getConfigurations(configurations: [[platform: 'linux']])
     } catch(e) {
       //NOOP
     }
@@ -362,9 +364,10 @@ class BuildPluginStepTests extends BaseTest {
     def script = loadScript(scriptName)
     // when running with incrementals
     helper.registerAllowedMethod('fileExists', [String.class], { s ->
-      return s.equals('.mvn/extensions.xml') || s.equals('pom.xml')
+      return s.equals('.mvn/extensions.xml') || s.equals('.mvn/maven.config') || s.equals('pom.xml')
     })
     helper.addReadFileMock('.mvn/extensions.xml', 'git-changelist-maven-extension')
+    helper.addReadFileMock('.mvn/maven.config', '-Pmight-produce-incrementals')
     // and no jenkins version
     script.call(configurations: [['platform': 'linux', 'jdk': 8, 'jenkins': null]])
     printCallStack()

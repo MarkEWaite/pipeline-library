@@ -57,7 +57,11 @@ class Infra implements Serializable {
 
   void publishDeprecationCheck(String deprecationSummary, String deprecationMessage) { }
 
-  String getBuildAgentLabel(String platform, String jdk, Boolean useContainerAgent) {
-    return "${platform}-${jdk}-${useContainerAgent.toString()}"
+  String getBuildAgentLabel(Map params) {
+    return "${params.platform}-${params.jdk}-${params.useContainerAgent.toString()}"
+  }
+
+  Object withFileShareServicePrincipal(Map options, Closure body) {
+    return body
   }
 }

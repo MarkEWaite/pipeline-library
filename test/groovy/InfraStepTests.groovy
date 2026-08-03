@@ -26,7 +26,9 @@ class InfraStepTests extends BaseTest {
     super.setUp()
 
     // Mock Pipeline methods which are not already declared in the parent class
-    helper.registerAllowedMethod('azureServicePrincipal', [Map.class], { m -> m })
+    helper.registerAllowedMethod('azureServicePrincipal', [Map.class], { m ->
+      m
+    })
   }
 
   @Test
@@ -71,6 +73,8 @@ class InfraStepTests extends BaseTest {
     printCallStack()
     assertTrue(isOK)
     assertJobStatusSuccess()
+    assertTrue(assertMethodCallContainsPattern('sh', 'echo "${DOCKER_CONFIG_PSW}" | "${CONTAINER_BIN}" login --username "${DOCKER_CONFIG_USR}" --password-stdin'))
+    assertTrue(assertMethodCallContainsPattern('sh', 'echo "INFO: logged in Docker Hub as \'${DOCKER_CONFIG_USR}\' with \'${DOCKERHUB_CREDENTIALS_ID}\' credentials, namespace: ${DOCKERHUB_ORGANISATION}"'))
   }
 
   @Test
@@ -98,6 +102,24 @@ class InfraStepTests extends BaseTest {
     printCallStack()
     assertTrue(isOK)
     assertJobStatusSuccess()
+    assertTrue(assertMethodCallContainsPattern('sh', 'echo "${DOCKER_CONFIG_PSW}" | "${CONTAINER_BIN}" login --username "${DOCKER_CONFIG_USR}" --password-stdin'))
+    assertTrue(assertMethodCallContainsPattern('sh', 'echo "INFO: logged in Docker Hub as \'${DOCKER_CONFIG_USR}\' with \'${DOCKERHUB_CREDENTIALS_ID}\' credentials, namespace: ${DOCKERHUB_ORGANISATION}"'))
+  }
+
+  @Test
+  void testWithDockerPushCredentialsWindows() throws Exception {
+    helper.registerAllowedMethod('isUnix', [], { false })
+    def script = loadScript(scriptName)
+    env.JENKINS_URL = 'https://ci.jenkins.io/'
+    def isOK = false
+    script.withDockerPushCredentials() {
+      isOK = true
+    }
+    printCallStack()
+    assertTrue(isOK)
+    assertJobStatusSuccess()
+    assertTrue(assertMethodCallContainsPattern('pwsh', 'Write-Output ${env:DOCKER_CONFIG_PSW} | & ${Env:CONTAINER_BIN} login --username ${Env:DOCKER_CONFIG_USR} --password-stdin'))
+    assertTrue(assertMethodCallContainsPattern('pwsh', 'Write-Host "INFO: logged in Docker Hub as \'$env:DOCKER_CONFIG_USR\' with \'$env:DOCKERHUB_CREDENTIALS_ID\' credentials, namespace: $env:DOCKERHUB_ORGANISATION"'))
   }
 
   @Test
@@ -126,6 +148,7 @@ class InfraStepTests extends BaseTest {
     assertTrue(isOK)
     assertJobStatusSuccess()
     assertTrue(assertMethodCallContainsPattern('sh', 'echo "${DOCKER_CONFIG_PSW}" | "${CONTAINER_BIN}" login --username "${DOCKER_CONFIG_USR}" --password-stdin'))
+    assertTrue(assertMethodCallContainsPattern('sh', 'echo "INFO: logged in Docker Hub as \'${DOCKER_CONFIG_USR}\' with \'${DOCKERHUB_CREDENTIALS_ID}\' credentials, namespace: ${DOCKERHUB_ORGANISATION}"'))
   }
 
   @Test
@@ -141,6 +164,7 @@ class InfraStepTests extends BaseTest {
     assertTrue(isOK)
     assertJobStatusSuccess()
     assertTrue(assertMethodCallContainsPattern('pwsh', 'Write-Output ${env:DOCKER_CONFIG_PSW} | & ${Env:CONTAINER_BIN} login --username ${Env:DOCKER_CONFIG_USR} --password-stdin'))
+    assertTrue(assertMethodCallContainsPattern('pwsh', 'Write-Host "INFO: logged in Docker Hub as \'$env:DOCKER_CONFIG_USR\' with \'$env:DOCKERHUB_CREDENTIALS_ID\' credentials, namespace: $env:DOCKERHUB_ORGANISATION"'))
   }
 
   @Test
@@ -395,7 +419,7 @@ class InfraStepTests extends BaseTest {
       isOK = true
     }
     printCallStack()
-    // then the correct Azure Service Principal credentials is used
+    // then the Azure Service Principal from the credentials passed in options is used
     assertTrue(assertMethodCallContainsPattern('azureServicePrincipal', "credentialsId=${defaultServicePrincipalCredentialsId}"))
     // then the correct options are passed as env vars
     assertTrue(assertMethodCallContainsPattern('withEnv', "STORAGE_NAME=${defaultFileShareStorageAccount}, STORAGE_FILESHARE=${defaultFileShare}, STORAGE_DURATION_IN_MINUTE=${defaultTokenDuration}, STORAGE_PERMISSIONS=${defaultTokenPermissions}"))
@@ -403,7 +427,7 @@ class InfraStepTests extends BaseTest {
     assertTrue(assertMethodCallOccurrences('sh', 1))
     // then it sets $FILESHARE_SIGNED_URL to the signed file share URL
     assertTrue(assertMethodCallContainsPattern('withEnv', "FILESHARE_SIGNED_URL=https://${defaultFileShareStorageAccount}.file.core.windows.net/${defaultFileShare}?sas-token"))
-    // then it inform about the URL expiring in the default amount of minutes
+    // then it inform about the signed URL expiring in the default amount of minutes available in $FILESHARE_SIGNED_URL
     assertTrue(assertMethodCallContainsPattern('echo', "INFO: ${defaultFileShare} file share signed URL expiring in ${defaultTokenDuration} minute(s) available in \$FILESHARE_SIGNED_URL"))
     // then the body closure is executed
     assertTrue(isOK)
@@ -417,6 +441,45 @@ class InfraStepTests extends BaseTest {
     helper.registerAllowedMethod('isInfra', [], { true })
     def script = loadScript(scriptName)
     def isOK = false
+    // with missing fileShareStorageAccount option
+    def options = [
+      servicePrincipalCredentialsId: defaultServicePrincipalCredentialsId,
+      fileShare: defaultFileShare
+    ]
+    script.withFileShareServicePrincipal(options) {
+      isOK = true
+    }
+    printCallStack()
+    // then an error message is displayed
+    assertTrue(assertMethodCallContainsPattern('echo', 'ERROR: At least one of these required options is missing: fileShare, fileShareStorageAccount'))
+    // then the Azure Service Principal from the credentials passed in options is not used
+    assertFalse(assertMethodCallContainsPattern('azureServicePrincipal', "credentialsId=${defaultServicePrincipalCredentialsId}"))
+    // then the correct options are not passed as env vars
+    assertFalse(assertMethodCallContainsPattern('withEnv', "STORAGE_NAME=${defaultFileShareStorageAccount}, STORAGE_FILESHARE=${defaultFileShare}, STORAGE_DURATION_IN_MINUTE=${defaultTokenDuration}, STORAGE_PERMISSIONS=${defaultTokenPermissions}"))
+    // then a script to get a file share signed URL is not called
+    assertFalse(assertMethodCallOccurrences('sh', 1))
+    // then it doesn't set $FILESHARE_SIGNED_URL to the signed file share URL
+    assertFalse(assertMethodCallContainsPattern('withEnv', "FILESHARE_SIGNED_URL="))
+    // then it doesn't inform neither about the signed URL expiring in the default amount of minutes available in $FILESHARE_SIGNED_URL
+    assertFalse(assertMethodCallContainsPattern('echo', "INFO: ${defaultFileShare} file share signed URL expiring in ${defaultTokenDuration} minute(s) available in \$FILESHARE_SIGNED_URL"))
+    // nor about the credential-less, azcopy logged in, and the URL available in $FILESHARE_SIGNED_URL
+    assertFalse(assertMethodCallContainsPattern('echo', "INFO: credential-less (using user assigned identity service principal), azcopy logged in and ${defaultFileShare} file share URL available in \$FILESHARE_SIGNED_URL"))
+    // then the body closure is not executed
+    assertFalse(isOK)
+    // then it doesn't succeeds
+    assertJobStatusFailure()
+  }
+
+  @Test
+  void testWithFileShareServicePrincipalCredentialsLess() throws Exception {
+    // When used on infra.ci.jenkins.io
+    helper.registerAllowedMethod('isInfra', [], { true })
+    helper.registerAllowedMethod('sh', [Map.class], { m ->
+      return "https://${defaultFileShareStorageAccount}.file.core.windows.net/${defaultFileShare}?sas-token"
+    })
+    def script = loadScript(scriptName)
+    def isOK = false
+    // without any servicePrincipalCredentialsId option
     def options = [
       fileShare: defaultFileShare,
       fileShareStorageAccount: defaultFileShareStorageAccount
@@ -425,22 +488,20 @@ class InfraStepTests extends BaseTest {
       isOK = true
     }
     printCallStack()
-    // then an error message is displayed
-    assertTrue(assertMethodCallContainsPattern('echo', 'ERROR: At least one of these required options is missing: servicePrincipalCredentialsId, fileShare, fileShareStorageAccount'))
-    // then the correct Azure Service Principal credentials is not used
-    assertFalse(assertMethodCallContainsPattern('azureServicePrincipal', "credentialsId=${defaultServicePrincipalCredentialsId}"))
-    // then the correct options are not passed as env vars
-    assertFalse(assertMethodCallContainsPattern('withEnv', "STORAGE_NAME=${defaultFileShareStorageAccount}, STORAGE_FILESHARE=${defaultFileShare}, STORAGE_DURATION_IN_MINUTE=${defaultTokenDuration}, STORAGE_PERMISSIONS=${defaultTokenPermissions}"))
-    // then a script to get a file share signed URL is not called
-    assertFalse(assertMethodCallOccurrences('sh', 1))
-    // then it doesn't set $FILESHARE_SIGNED_URL to the signed file share URL
-    assertFalse(assertMethodCallContainsPattern('withEnv', "FILESHARE_SIGNED_URL="))
-    // then it doesn't inform about the URL expiring in the default amount of minutes
-    assertFalse(assertMethodCallContainsPattern('echo', "INFO: ${defaultFileShare} file share signed URL expiring in ${defaultTokenDuration} minute(s) available in \$FILESHARE_SIGNED_URL"))
-    // then the body closure is not executed
-    assertFalse(isOK)
-    // then it doesn't succeeds
-    assertJobStatusFailure()
+    // then no Azure Service Principal from the credentials (not) passed in options is used
+    assertFalse(assertMethodCallContainsPattern('azureServicePrincipal', 'credentialsId='))
+    // then the correct options are passed as env vars
+    assertTrue(assertMethodCallContainsPattern('withEnv', "STORAGE_NAME=${defaultFileShareStorageAccount}, STORAGE_FILESHARE=${defaultFileShare}, STORAGE_DURATION_IN_MINUTE=${defaultTokenDuration}, STORAGE_PERMISSIONS=${defaultTokenPermissions}"))
+    // then a script to get a file share signed URL is called
+    assertTrue(assertMethodCallOccurrences('sh', 1))
+    // then it sets $FILESHARE_SIGNED_URL to the signed file share URL
+    assertTrue(assertMethodCallContainsPattern('withEnv', "FILESHARE_SIGNED_URL=https://${defaultFileShareStorageAccount}.file.core.windows.net/${defaultFileShare}?sas-token"))
+    // then it inform about the credential-less, azcopy logged in, and the URL available in $FILESHARE_SIGNED_URL
+    assertTrue(assertMethodCallContainsPattern('echo', "INFO: credential-less (using user assigned identity service principal), azcopy logged in and ${defaultFileShare} file share URL available in \$FILESHARE_SIGNED_URL"))
+    // then the body closure is executed
+    assertTrue(isOK)
+    // then it succeeds
+    assertJobStatusSuccess()
   }
 
   @Test
@@ -478,52 +539,105 @@ class InfraStepTests extends BaseTest {
   }
 
   @Test
-  void testGetBuildAgentLabelWithLinuxJDK21Container() throws Exception {
+  void testGetBuildAgentLabel() throws Exception {
     def script = loadScript(scriptName)
-    String gotResult = script.getBuildAgentLabel('linux', '21', true)
-    printCallStack()
-    assertTrue(gotResult == 'maven-21')
-    assertFalse(assertMethodCallContainsPattern('echo', 'WARNING: Unknown Virtual Machine platform'))
-    assertJobStatusSuccess()
-  }
 
-  @Test
-  void testGetBuildAgentLabelWithLinuxJDK8VM() throws Exception {
-    def script = loadScript(scriptName)
-    String gotResult = script.getBuildAgentLabel('linux', '8', false)
-    printCallStack()
-    assertTrue(gotResult == 'vm && linux')
-    assertFalse(assertMethodCallContainsPattern('echo', 'WARNING: Unknown Virtual Machine platform'))
-    assertJobStatusSuccess()
-  }
+    def cases = [
+      // container agents
+      [platform: 'linux', jdk: '21', container: true, expected: 'maven-21', warning: null],
+      [platform: 'windows', jdk: '17', container: true, expected: 'maven-17-windows', warning: null],
+      // VM agents
+      [platform: 'linux', jdk: '8', container: false, expected: 'vm && linux', warning: null],
+      [platform: 'windows', jdk: '8', container: false, expected: 'windows-2025', warning: null],
+      // unknown platform
+      [platform: 'openbsd', jdk: '11', container: false, expected: 'openbsd', warning: 'vm'],
+      [platform: 'openbsd', jdk: '11', container: true, expected: 'openbsd', warning: 'container'],
+      // docker controller and agents jobs
+      [
+        // linux image
+        platform: 'docker-highmem', jdk: '', container: false,
+        expected: 'docker-highmem && spot', warning: null
+      ],
+      [
+        // linux image built on trusted.ci.jenkins.io
+        platform: 'docker-highmem', jdk: '', container: false, trustedEnv: true,
+        expected: 'linux', warning: null
+      ],
+      [
+        // windows 2025 image
+        platform: 'windows-2025', jdk: '', container: false,
+        expected: 'windows-2025 && spot', warning: null
+      ],
+      [
+        // windows 2019 image built on trusted.ci.jenkins.io
+        platform: 'windows-2019', jdk: '', container: false, trustedEnv: true,
+        expected: 'windows-2019', warning: null
+      ],
+      [
+        // linux image first run
+        platform: 'docker-highmem', jdk: '', container: false, retry: 0,
+        expected: 'docker-highmem && spot', warning: null
+      ],
+      [
+        // linux image third run (second retry after the first run)
+        platform: 'docker-highmem', jdk: '', container: false, retry: 2,
+        expected: 'docker-highmem && nonspot', warning: null
+      ],
+      [
+        // windows 2022 image third run (second retry after the first run)
+        platform: 'windows-2022', jdk: '', container: false, retry: 2,
+        expected: 'windows-2022 && nonspot', warning: null
+      ],
+      [
+        // linux image built on trusted.ci.jenkins.io third run (second retry after the first run)
+        platform: 'docker-highmem', jdk: '', container: false, trustedEnv: true, retry: 2,
+        expected: 'linux', warning: null
+      ],
+      [
+        // windows 2025 image built on trusted.ci.jenkins.io third run (second retry after the first run)
+        platform: 'windows-2025', jdk: '', container: false, trustedEnv: true, retry: 2,
+        expected: 'windows-2025', warning: null
+      ],
+    ]
 
-  @Test
-  void testGetBuildAgentLabelWithWindowsJDK17Container() throws Exception {
-    def script = loadScript(scriptName)
-    String gotResult = script.getBuildAgentLabel('windows', '17', true)
-    printCallStack()
-    assertTrue(gotResult == 'maven-17-windows')
-    assertFalse(assertMethodCallContainsPattern('echo', 'WARNING: Unknown Virtual Machine platform'))
-    assertJobStatusSuccess()
-  }
+    cases.each { c ->
+      // reset call stack between cases
+      clearCallStack()
 
-  @Test
-  void testGetBuildAgentLabelWithWindowsJDK8VM() throws Exception {
-    def script = loadScript(scriptName)
-    String gotResult = script.getBuildAgentLabel('windows', '8', false)
-    printCallStack()
-    assertTrue(gotResult == 'docker-windows')
-    assertFalse(assertMethodCallContainsPattern('echo', 'WARNING: Unknown Virtual Machine platform'))
-    assertJobStatusSuccess()
-  }
+      // default values
+      def spotRetryCounter = c.containsKey('retry') ? c.retry : null
+      // environment (trusted.ci.jenkins.io or not)
+      env.JENKINS_URL = (c.containsKey('trustedEnv') && c.trustedEnv) ? 'https://trusted.ci.jenkins.io:1443/' : 'https://ci.jenkins.io/'
+      binding.setVariable('env', env)
 
-  @Test
-  void testGetBuildAgentLabelUnsupportedPlatform() throws Exception {
-    def script = loadScript(scriptName)
-    String gotResult = script.getBuildAgentLabel('openbsd', '11', false)
-    printCallStack()
-    assertTrue(gotResult == 'openbsd')
-    assertTrue(assertMethodCallContainsPattern('echo', 'WARNING: Unknown Virtual Machine platform'))
+      String result = script.getBuildAgentLabel([
+        useContainerAgent: c.container,
+        platform: c.platform,
+        jdk: c.jdk,
+        spotRetryCounter: spotRetryCounter
+      ])
+      printCallStack()
+
+      assertEquals("Unexpected result for case: ${c}", c.expected, result)
+
+      if (c.warning == null) {
+        assertFalse("Did not expect a warning for case: ${c}", assertMethodCallContainsPattern('echo', 'WARNING:'))
+      }
+      if (c.warning == 'vm') {
+        assertTrue("Expected VM warning for case: ${c}", assertMethodCallContainsPattern('echo', 'Unknown Virtual Machine platform'))
+      }
+      if (c.warning == 'container') {
+        assertTrue("Expected container warning for case: ${c}", assertMethodCallContainsPattern('echo', 'Unknown container platform'))
+      }
+
+      if (c.containsKey('trustedEnv') && c.trustedEnv) {
+        assertMethodCallContainsPattern('echo', 'running on trusted.ci.jenkins.io')
+      }
+      if (c.containsKey('retry') && c.retry> 1) {
+        assertMethodCallContainsPattern('echo', 'more than one retry, using "nonspot" agent')
+      }
+    }
+
     assertJobStatusSuccess()
   }
 }

@@ -10,7 +10,7 @@ def call(Map params = [:]) {
   def useContainerAgent = params.containsKey('useContainerAgent') ? params.useContainerAgent : false
   def failFast = params.containsKey('failFast') ? params.failFast : true
   def timeoutValue = params.containsKey('timeout') ? params.timeout : 60
-  if (timeoutValue > 180) {
+  if (timeoutValue> 180) {
     echo "Timeout value requested was $timeoutValue, lowering to 180 to avoid Jenkins project's resource abusive consumption"
     timeoutValue = 180
   }
@@ -20,10 +20,14 @@ def call(Map params = [:]) {
   boolean archivedArtifacts = false
   Map tasks = [failFast: failFast]
   buildPlugin.getConfigurations(params).each { config ->
-    String label = infra.getBuildAgentLabel(config.platform, config.jdk, useContainerAgent)
     String jdk = config.jdk
+    String platform = config.platform
     String jenkinsVersion = config.jenkins
-
+    String label = infra.getBuildAgentLabel([
+      useContainerAgent: useContainerAgent,
+      platform: platform,
+      jdk: jdk
+    ])
     String stageIdentifier = "${label}-${jdk}${jenkinsVersion ? '-' + jenkinsVersion : ''}"
     boolean first = tasks.size() == 1
     boolean skipTests = params?.tests?.skip
@@ -126,10 +130,10 @@ def call(Map params = [:]) {
 
               recordIssues(
                   enabledForFailure: true, tool: taskScanner(
-                  includePattern:'**/*.java',
-                  excludePattern:'**/build/**',
-                  highTags:'FIXME',
-                  normalTags:'TODO'),
+                      includePattern: '**/*.java',
+                      excludePattern: '**/build/**',
+                      highTags: 'FIXME',
+                      normalTags: 'TODO'),
                   sourceCodeEncoding: 'UTF-8',
                   skipBlames: true,
                   trendChartType: 'NONE'
